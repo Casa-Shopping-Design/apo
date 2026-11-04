@@ -1,3 +1,4 @@
+import { BarraProporcao } from "@/componentes/BarraProporcao";
 import { execucaoMaisRecente, financeiroAdiantado, type LinhaExecucao } from "@/lib/consultas/resumo-origem";
 import { formatarMes, formatarPercentual } from "@/lib/formatar";
 
@@ -5,18 +6,15 @@ function percentual(fracao: number | null): string {
   return fracao === null ? "sem dado" : formatarPercentual(fracao);
 }
 
-// Barra de 0 a 100%; valor acima de 1 (pago além do orçado) enche a barra e o número mostra o excesso.
+// Valor acima de 1 (pago além do orçado) enche a barra e o número mostra o excesso.
 function Barra({ rotulo, fracao, cor }: { rotulo: string; fracao: number | null; cor: string }) {
-  const largura = Math.max(0, Math.min(1, fracao ?? 0)) * 100;
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm text-suave">{rotulo}</span>
         <span className="text-lg font-semibold tabular-nums">{percentual(fracao)}</span>
       </div>
-      <div className="h-3 rounded-sm bg-trilho" aria-hidden="true">
-        <div className={`h-3 rounded-sm ${cor}`} style={{ width: `${largura}%` }} />
-      </div>
+      <BarraProporcao fracao={fracao} cor={cor} />
     </div>
   );
 }
@@ -30,9 +28,9 @@ export function TabelaExecucao({ linhas }: { linhas: LinhaExecucao[] }) {
       {atual && (
         <div className="flex flex-col gap-4 secao">
           <p className="text-sm text-suave">Posição de {formatarMes(atual.competencia)}</p>
-          <Barra rotulo="Físico medido" fracao={atual.pct_fisico} cor="bg-entrada" />
-          <Barra rotulo="Pago sobre o orçado" fracao={atual.pct_financeiro} cor="bg-saida" />
-          <Barra rotulo="Incorrido sobre o orçado, segundo o ERP" fracao={atual.pct_financeiro_origem} cor="bg-repasse" />
+          <Barra rotulo="Físico medido" fracao={atual.pct_fisico} cor="fill-entrada" />
+          <Barra rotulo="Pago sobre o orçado" fracao={atual.pct_financeiro} cor="fill-saida" />
+          <Barra rotulo="Incorrido sobre o orçado, segundo o ERP" fracao={atual.pct_financeiro_origem} cor="fill-repasse" />
           {financeiroAdiantado(atual.diferenca_financeiro_fisico) && (
             <p className="text-sm font-semibold text-atencao">
               O pago está mais de 10 pontos à frente do físico. Vale conferir adiantamento a fornecedor ou medição

@@ -155,6 +155,14 @@ class RepositorioFalso:
     def recarregar(self, tenant):
         self.recargas += 1
 
+    def sincronizar_centros_custo(self, tenant):
+        """Mesma regra de app.sincronizar_centros_custo: tipos 1 e 2 (ou sem type) viram obra; nada sai."""
+        vistas = {p["id"] for p in self.payloads("enterprises") if str(p.get("type", "1")) in ("1", "2")}
+        novas = sorted(vistas - set(self.obras))
+        self.obras = sorted(set(self.obras) | vistas)
+        return ({"lidas": len(self.payloads("enterprises")), "criadas": len(novas), "atualizadas": 0,
+                 "fora_do_painel": 0, "ausentes_na_origem": []}, list(self.obras))
+
     def contagem(self):
         return Counter(e for (_, e, _) in self.raw)
 
@@ -214,6 +222,26 @@ class TesteCarga(unittest.TestCase):
         tudo = json.dumps([p for (_, p) in repo.raw.values()], ensure_ascii=False)
         for proibido in (CPF, "Maria", "Joao Pedreiro", "fulano", "0001-2", "12.345.678"):
             self.assertNotIn(proibido, tudo)
+
+    def test_primeira_carga_sem_obra_cadastrada_sincroniza_antes_das_tarefas_por_obra(self):
+        origem, repo = Origem(), RepositorioFalso(obras=())
+        relatorio, _ = self.rodar(origem, repo)
+        self.assertEqual(relatorio.falhas, [])
+        self.assertEqual(repo.obras, [101])
+        self.assertEqual(relatorio.obras["criadas"], 1)
+        self.assertEqual(repo.contagem()["sales"], 2)
+        self.assertIn("obras: 1 criadas", relatorio.texto())
+
+    def test_tenant_que_fica_sem_obra_para_antes_de_avancar_as_marcas(self):
+        origem, repo = Origem(), RepositorioFalso(obras=())
+        rest = origem.rest()
+        rest["enterprises"] = [{"id": 101, "name": "Administrativo", "type": "3"}]
+        with ApiFalsa(rest=rest, bulk=origem.bulk()) as api:
+            relatorio = executar(cliente_para(api), repo, TENANT, HOJE, **OPCOES)
+        self.assertEqual(relatorio.falhas, [("centros_custo", "sem obra")])
+        self.assertEqual(repo.obras, [])
+        self.assertEqual({e for (_, e) in repo.marcas}, {"cost-centers", "enterprises"})
+        self.assertEqual(repo.recargas, 1)
 
     def test_segunda_carga_igual_nao_duplica(self):
         origem, repo = Origem(), RepositorioFalso()

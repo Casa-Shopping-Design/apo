@@ -124,6 +124,20 @@ class TesteRegistroNoBanco(unittest.TestCase):
         return self.conexao.execute(
             "select ultima_carga_em from marts.ultima_carga where tenant_id = %s", (self.tenant,)).fetchone()
 
+    def test_primeira_carga_cria_as_obras_a_partir_do_raw_com_linha_propria(self):
+        self.conexao.execute("delete from app.centro_custo where tenant_id = %s", (self.tenant,))
+        relatorio = self.rodar(base.Origem())
+        self.assertEqual(relatorio.falhas, [])
+        obras = self.conexao.execute(
+            "select id_origem, nome, tipo_origem, sincronizado_em is not null from app.centro_custo "
+            "where tenant_id = %s", (self.tenant,)).fetchall()
+        self.assertEqual(obras, [(101, "Obra A", "1", True)])
+        por_endpoint = {e: linha for e, *linha in self.execucoes()}
+        self.assertEqual(por_endpoint["centros_custo"][:3], ["ok", 1, 1])
+        unidades = self.conexao.execute(
+            "select count(*) from staging.unidade where tenant_id = %s", (self.tenant,)).fetchone()[0]
+        self.assertEqual(unidades, 1)
+
     def test_sucesso_fecha_uma_linha_por_tarefa_e_uma_do_staging(self):
         relatorio = self.rodar(base.Origem())
         self.assertEqual(relatorio.falhas, [])

@@ -8,6 +8,10 @@ ao banco. No fim recarrega o staging do tenant.
 Antes do plano, os IDs avisados pelo webhook (app.evento_origem) são reconsultados na API e os
 eventos saem da fila na mesma transação que grava o que veio. Fila vazia não muda nada.
 
+A credencial e a URL do ERP vêm do ambiente; o resto da configuração vem de app.origem_configuracao
+do tenant (cadastrar_cliente.py). Depois do cadastro de empreendimentos, app.sincronizar_centros_custo
+cria ou atualiza as obras em app.centro_custo, antes de qualquer tarefa que peça dado por obra.
+
 Uso:
     python scripts/carregar_origem.py
     python scripts/carregar_origem.py --tenant <uuid>
@@ -20,7 +24,7 @@ import logging
 import os
 import sys
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -28,6 +32,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from campos_permitidos import EndpointSemLista, filtrar  # noqa: E402
 from cliente_origem import BulkIndisponivel, ClienteOrigem, ConfiguracaoOrigem, CotaEsgotada, ErroOrigem  # noqa: E402
+from configuracao_origem import (  # noqa: E402
+    CHAVE_SOBRESCRITA, SemConfiguracao, ler_configuracao, sobrescrever_pelo_ambiente,
+)
+from configuracao_origem import opcoes_de_ambiente as opcoes_so_do_ambiente  # noqa: E402
 from registro_execucao import RegistroExecucao  # noqa: E402
 
 log = logging.getLogger("carregar_origem")
@@ -613,6 +621,15 @@ class RepositorioBanco:
                 (tenant, so_rest),
             )
 
+    def sincronizar_centros_custo(self, tenant):
+        """Devolve o relatório da função e a lista de obras do tenant depois dela."""
+        with self.conexao.transaction(), self.conexao.cursor() as cur:
+            cur.execute("select app.sincronizar_centros_custo(%s)", (tenant,))
+            resultado = cur.fetchone()[0]
+            cur.execute("select id_origem from app.centro_custo where tenant_id = %s order by id_origem", (tenant,))
+            obras = [linha[0] for linha in cur.fetchall()]
+        return resultado, obras
+
     @staticmethod
     def _gravar_registros(cur, tenant, lote):
         """Grava o lote em raw e troca a versão antiga de cada chave. Roda dentro da transação de quem chama."""
@@ -729,6 +746,9 @@ class RepositorioBanco:
 
 # marts.ultima_carga só considera a carga feita quando esta etapa termina com sucesso.
 ETAPA_STAGING = "staging"
+# Linha própria em carga_execucao para a sincronização das obras; a tarefa que a alimenta é enterprises.
+ETAPA_CENTROS_CUSTO = "centros_custo"
+TAREFA_OBRAS = "enterprises"
 
 
 class RepositorioComRegistro(RepositorioBanco):
@@ -751,6 +771,12 @@ class RepositorioComRegistro(RepositorioBanco):
             etapa.contar(contagens)
         return contagens
 
+    def sincronizar_centros_custo(self, tenant):
+        with self.registro.etapa(tenant, ETAPA_CENTROS_CUSTO) as etapa:
+            resultado, obras = super().sincronizar_centros_custo(tenant)
+            etapa.lidos, etapa.novos = resultado.get("lidas"), resultado.get("criadas")
+        return resultado, obras
+
     def recarregar(self, tenant):
         with self.registro.etapa(tenant, ETAPA_STAGING):
             super().recarregar(tenant)
@@ -764,9 +790,14 @@ class Relatorio:
     caminho: str = "bulk"
     chamadas: dict = field(default_factory=dict)
     fila: dict = field(default_factory=dict)
+    obras: dict = field(default_factory=dict)
 
     def texto(self):
         saida = [f"caminho: {self.caminho}"]
+        if self.obras:
+            saida.append(f"obras: {self.obras.get('criadas', 0)} criadas, {self.obras.get('atualizadas', 0)} "
+                         f"atualizadas, {self.obras.get('fora_do_painel', 0)} fora do painel, "
+                         f"{len(self.obras.get('ausentes_na_origem') or [])} ausentes na origem")
         if self.fila:
             saida.append(f"fila: {self.fila.get('processados', 0)} eventos processados, "
                          f"{self.fila.get('adiados', 0)} ficaram para a próxima execução")
@@ -1095,6 +1126,32 @@ def _usar_bulk(modo, hoje, reverificar_dias):
     return (hoje - modo[1].date()).days >= reverificar_dias
 
 
+def sincronizar_obras(ctx, repositorio, tenant, relatorio):
+    """Com os empreendimentos em raw, app.centro_custo ganha as obras novas e as tarefas seguintes já pedem
+    dado delas. Falha aqui não derruba a carga: as obras que já existiam seguem valendo."""
+    try:
+        resultado, ctx.obras = repositorio.sincronizar_centros_custo(tenant)
+    except Exception as erro:
+        log.error("sincronização das obras falhou: %s", type(erro).__name__)
+        relatorio.falhas.append((ETAPA_CENTROS_CUSTO, type(erro).__name__))
+        return
+    relatorio.obras = resultado
+    ausentes = resultado.get("ausentes_na_origem") or []
+    if ausentes:
+        log.warning("%d obra(s) de app.centro_custo não vieram mais do ERP e seguem no painel: %s",
+                    len(ausentes), ", ".join(str(o) for o in ausentes))
+
+
+def _sem_obras(tarefa, ctx, relatorio):
+    """Sem obra nenhuma o plano para: as tarefas por obra gravariam vazio e avançariam a marca, e a noite
+    seguinte pediria só o que mudou desde então."""
+    if tarefa.endpoint != TAREFA_OBRAS or ctx.obras:
+        return False
+    log.error("nenhuma obra em app.centro_custo depois do cadastro de empreendimentos; a carga para aqui")
+    relatorio.falhas.append((ETAPA_CENTROS_CUSTO, "sem obra"))
+    return True
+
+
 # O(T) tarefas; cada tarefa é O(n) nos registros dela.
 def executar(cliente, repositorio, tenant, hoje, **opcoes):
     reverificar_dias = opcoes.pop("reverificar_bulk_dias", 30)
@@ -1144,13 +1201,21 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
             motivo = motivo_falha(erro)
             log.error("%s falhou: %s", tarefa.endpoint, motivo)
             relatorio.falhas.append((tarefa.endpoint, motivo))
+            if _sem_obras(tarefa, ctx, relatorio):
+                break
             continue
         except Exception as erro:
             # erro do banco pode trazer valor de linha no detalhe; o log leva só o tipo
             log.error("%s falhou no banco: %s", tarefa.endpoint, type(erro).__name__)
             relatorio.falhas.append((tarefa.endpoint, type(erro).__name__))
+            if _sem_obras(tarefa, ctx, relatorio):
+                break
             continue
         ctx.concluidas.add(tarefa.endpoint)
+        if tarefa.endpoint == TAREFA_OBRAS:
+            sincronizar_obras(ctx, repositorio, tenant, relatorio)
+            if _sem_obras(tarefa, ctx, relatorio):
+                break
         if tarefa in PLANO_BULK and tarefa not in PLANO_SO_REST:
             bulk_respondeu = True
         relatorio.linhas.extend(contagens.items())
@@ -1169,36 +1234,19 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
     return relatorio
 
 
-def _mes_de_texto(texto):
-    if not texto:
-        return None
-    try:
-        ano, mes = texto.split("-")
-        return date(int(ano), int(mes), 1)
-    except ValueError:
-        raise ValueError("ORIGEM_INICIO_CONTABIL deve estar no formato aaaa-mm, por exemplo 2023-01") from None
-
-
-def _empresas_de_texto(texto):
-    partes = [p.strip() for p in (texto or "").split(",") if p.strip()]
-    if not all(p.isdigit() for p in partes):
-        raise ValueError("ORIGEM_EMPRESAS_CONTABEIS deve ser uma lista de códigos de empresa separados por vírgula")
-    return tuple(sorted({int(p) for p in partes}))
-
-
 def opcoes_de_ambiente(ambiente=None):
-    amb = os.environ if ambiente is None else ambiente
-    return {
-        "inicio_contabil": _mes_de_texto(amb.get("ORIGEM_INICIO_CONTABIL", "").strip()),
-        "empresas_contabeis": _empresas_de_texto(amb.get("ORIGEM_EMPRESAS_CONTABEIS")),
-        "janela_dias": int(amb.get("ORIGEM_JANELA_INICIAL_DIAS") or 400),
-        "horizonte_dias": int(amb.get("ORIGEM_HORIZONTE_DIAS") or 3650),
-        "dias_pagamento": int(amb.get("ORIGEM_DIAS_PAGAMENTO") or 7),
-        "indexador_correcao": amb.get("ORIGEM_INDEXADOR_CORRECAO", ""),
-        "reverificar_bulk_dias": int(amb.get("ORIGEM_REVERIFICAR_BULK_DIAS") or 30),
-        "limite_fila_rest": int(amb.get("ORIGEM_FILA_LIMITE_REST") or 100),
-        "limite_fila_bulk": int(amb.get("ORIGEM_FILA_LIMITE_BULK") or 4),
-    }
+    return opcoes_so_do_ambiente(os.environ if ambiente is None else ambiente)
+
+
+def configuracao_do_tenant(conexao, tenant, ambiente):
+    """Configuração do banco, com o ambiente por cima só quando ORIGEM_SOBRESCREVER_CONFIGURACAO está ligada."""
+    configuracao, aplicadas, ignoradas = sobrescrever_pelo_ambiente(ler_configuracao(conexao, tenant), ambiente)
+    if aplicadas:
+        log.warning("configuração do banco sobrescrita pelo ambiente: %s", ", ".join(aplicadas))
+    if ignoradas:
+        log.warning("variáveis ignoradas, vale o que está em app.origem_configuracao: %s "
+                    "(para sobrescrever em teste local, exporte %s=1)", ", ".join(ignoradas), CHAVE_SOBRESCRITA)
+    return configuracao
 
 
 def main():
@@ -1213,14 +1261,18 @@ def main():
     if not args.tenant or not os.environ.get("DATABASE_URL"):
         sys.exit("Informe TENANT_ID (ou --tenant) e DATABASE_URL no .env")
     try:
-        config = ConfiguracaoOrigem.de_ambiente()
-        opcoes = opcoes_de_ambiente()
+        credencial = ConfiguracaoOrigem.de_ambiente()
     except ValueError as erro:
         sys.exit(str(erro))
-    cliente = ClienteOrigem(config)
     with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conexao:
+        try:
+            configuracao = configuracao_do_tenant(conexao, args.tenant, os.environ)
+        except (SemConfiguracao, ValueError) as erro:
+            sys.exit(str(erro))
+        cliente = ClienteOrigem(replace(credencial, **configuracao.limites))
         repositorio = RepositorioComRegistro(conexao)
-        relatorio = executar(cliente, repositorio, args.tenant, date.today(), fila_eventos=repositorio, **opcoes)
+        relatorio = executar(cliente, repositorio, args.tenant, date.today(), fila_eventos=repositorio,
+                             **configuracao.opcoes)
         repositorio.limpar_eventos_processados(args.tenant, "erp")
     print(relatorio.texto())
     if relatorio.cota_esgotada:
