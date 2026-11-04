@@ -5,25 +5,31 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { ChatAssistente } from "@/componentes/ChatAssistente";
 import { MarcaApo } from "@/componentes/MarcaApo";
+import { SeletorCliente } from "@/componentes/SeletorCliente";
+import { mostrarSeletorCliente, type ClienteUsuario } from "@/lib/cliente-ativo";
 import { itemAtivo, itensMenu } from "@/lib/menu";
 
 // O contorno de foco fica para dentro, senão a borda do menu corta o contorno do item.
 const classeFoco = "focus-visible:outline-offset-[-3px]";
 
-// perfil é o nome mostrado; codigoPerfil é o valor cru que decide os itens.
+// perfil é o nome mostrado; codigoPerfil é o valor cru que decide os itens. clientes traz os vínculos vivos:
+// com mais de um, o nome da construtora vira seletor.
 // No celular os itens ficam atrás do botão Menu, para a tela começar pelo conteúdo; a partir de md o menu
 // fica sempre aberto na lateral. O item ativo leva fio à esquerda e negrito, para não depender só da cor.
 export function MenuLateral({
   perfil,
   codigoPerfil,
   construtora,
+  clientes = [],
 }: {
   perfil: string;
   codigoPerfil: string | null;
   construtora: string;
+  clientes?: ClienteUsuario[];
 }) {
   const caminho = usePathname();
   const [aberto, setAberto] = useState(false);
+  const comSeletor = mostrarSeletorCliente(clientes);
 
   return (
     <nav
@@ -72,13 +78,14 @@ export function MenuLateral({
           <ChatAssistente />
           <p className="px-4 pt-3 text-[13px] leading-normal text-suave md:px-5">
             {perfil}
-            {construtora && (
+            {construtora && !comSeletor && (
               <>
                 <br />
                 {construtora}
               </>
             )}
           </p>
+          {comSeletor && <SeletorCliente clientes={clientes} classeFoco={classeFoco} />}
           <form action="/sair" method="post">
             <button
               type="submit"

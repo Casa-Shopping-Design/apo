@@ -187,8 +187,7 @@ async function responderPergunta(
     const reserva = await reservarPergunta(idRequisicao, pergunta);
     if (!reserva.ok) {
       anotar(reserva.motivo);
-      const texto = reserva.motivo === "teto" ? mensagens.assistente.teto : mensagens.assistente.limite;
-      return responderErro(429, texto, idRequisicao);
+      return responderErro(429, mensagens.assistente[reserva.motivo], idRequisicao);
     }
     idPergunta = reserva.idPergunta;
   } catch {

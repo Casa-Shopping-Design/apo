@@ -9,6 +9,7 @@ export type ResultadoLog =
   | "recusada"
   | "limite"
   | "teto"
+  | "franquia"
   | "fora_do_catalogo"
   | "pergunta_invalida"
   | "erro_redacao";
