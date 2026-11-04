@@ -8,7 +8,11 @@ export const caminhosAcesso = {
   verificar: "/seguranca/segundo-fator/verificar",
 } as const;
 
-const perfisComSegundoFator: ReadonlySet<string> = new Set(["diretor", "financeiro"]);
+// Código que o painel dá ao operador da plataforma, que não tem perfil em app.usuario_tenant (ADR 0023).
+// As políticas de pedido e de requisição exigem aal2 dele, então a barreira o trata como diretor.
+export const perfilOperador = "operador";
+
+const perfisComSegundoFator: ReadonlySet<string> = new Set(["diretor", "financeiro", perfilOperador]);
 
 // Rotas que nunca recebem redirecionamento: entrada, saída, manutenção, saúde e as próprias telas do segundo fator.
 const caminhosSemBarreira: ReadonlySet<string> = new Set(["/entrar", "/sair", "/manutencao", "/api/saude"]);

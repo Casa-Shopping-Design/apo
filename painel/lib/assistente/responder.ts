@@ -1,6 +1,6 @@
 import "server-only";
 import type { LinhaConsulta, UsoModelo } from "@/lib/assistente/executar";
-import { lerTexto, type ClienteModelo, type FormatoDevolvido } from "@/lib/assistente/gerar-sql";
+import { criarMensagemRegistrada, lerTexto, type ClienteModelo, type FormatoDevolvido } from "@/lib/assistente/gerar-sql";
 import {
   calcularUso,
   modeloAssistente,
@@ -108,7 +108,7 @@ export async function redigirResposta(
 ): Promise<RespostaRedigida> {
   if (linhas.length === 0) return { texto: mensagens.assistente.semDados, uso: usoZerado };
 
-  const resposta = await cliente.messages.create({
+  const resposta = await criarMensagemRegistrada(cliente, {
     model: modeloAssistente,
     max_tokens: 2000,
     system: sistemaResposta,

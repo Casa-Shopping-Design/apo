@@ -14,6 +14,8 @@ const auth = {
 
 const banco = {
   perfil: null as string | null,
+  operador: false,
+  operadorFora: false,
   fora: false,
   consultas: 0,
 };
@@ -36,6 +38,9 @@ function clienteSimulado(): SupabaseClient {
     schema: (nome: string) => ({
       rpc: async (funcao: string) => {
         banco.consultas += 1;
+        if (nome === "app" && funcao === "e_operador") {
+          return banco.operadorFora ? { data: null, error: { code: "57014" } } : { data: banco.operador, error: null };
+        }
         if (nome !== "app" || funcao !== "perfil_atual") return { data: null, error: { code: "PGRST202" } };
         return banco.fora ? { data: null, error: { code: "57014" } } : { data: banco.perfil, error: null };
       },
@@ -46,7 +51,7 @@ function clienteSimulado(): SupabaseClient {
 
 beforeEach(() => {
   Object.assign(auth, { logado: true, perfilNoClaim: null, aal: "aal1", fatores: 0, fatoresFora: false });
-  Object.assign(banco, { perfil: null, fora: false, consultas: 0 });
+  Object.assign(banco, { perfil: null, operador: false, operadorFora: false, fora: false, consultas: 0 });
 });
 
 describe("lerNivelSessao com o claim de perfil no JWT", () => {
@@ -73,9 +78,32 @@ describe("lerNivelSessao com o JWT sem perfil", () => {
     expect(banco.consultas).toBe(1);
   });
 
-  it("aceita o usuário sem vínculo, que o banco devolve como nulo", async () => {
+  it("aceita o usuário sem vínculo, que o banco devolve como nulo, depois de conferir se é operador", async () => {
     const nivel = await lerNivelSessao(clienteSimulado());
     expect(nivel).toMatchObject({ perfil: null, perfilLido: true, temFator: false });
+    expect(banco.consultas).toBe(2);
+  });
+
+  it("sem vínculo e cadastrado como operador da plataforma recebe o código operador e precisa do segundo fator", async () => {
+    banco.operador = true;
+    auth.fatores = 1;
+    const nivel = await lerNivelSessao(clienteSimulado());
+    expect(nivel).toMatchObject({ perfil: "operador", perfilLido: true, aal: "aal1", temFator: true });
+  });
+
+  it("não consulta o operador quando o vínculo existe", async () => {
+    banco.perfil = "leitura";
+    banco.operador = true;
+    const nivel = await lerNivelSessao(clienteSimulado());
+    expect(nivel.perfil).toBe("leitura");
+    expect(banco.consultas).toBe(1);
+  });
+
+  it("marca o perfil como não lido quando a conferência do operador falha", async () => {
+    banco.operadorFora = true;
+    auth.fatores = 1;
+    const nivel = await lerNivelSessao(clienteSimulado());
+    expect(nivel).toMatchObject({ perfil: null, perfilLido: false, temFator: true });
   });
 
   it("marca o perfil como não lido quando o banco não responde", async () => {

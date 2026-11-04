@@ -60,7 +60,7 @@ class LimitadorPorMinuto:
 
 class ClienteCrm:
     def __init__(self, url_base, email, token, limite_por_minuto=LIMITE_PADRAO_POR_MINUTO,
-                 relogio=time.monotonic, dormir=time.sleep, tempo_limite=60):
+                 relogio=time.monotonic, dormir=time.sleep, tempo_limite=60, anotar=None, teto_chamadas=None):
         url_base = (url_base or "").rstrip("/")
         partes = urllib.parse.urlsplit(url_base)
         local = partes.hostname in ("localhost", "127.0.0.1", "::1")
@@ -73,21 +73,37 @@ class ClienteCrm:
         self.limitador = LimitadorPorMinuto(limite_por_minuto, relogio, dormir)
         self.dormir = dormir
         self.tempo_limite = tempo_limite
+        # Registro de requisições (registro_requisicoes.anotar) e teto de chamadas desta execução, que o
+        # carregador calcula pela cota diária do CRM menos o que já foi gasto hoje.
+        self.anotar = anotar
+        self.teto_chamadas = teto_chamadas
+        self.chamadas = 0
 
     def __repr__(self):
         return f"ClienteCrm(url_base={self.url_base!r})"
 
+    def _anotar(self, url, status, inicio, tamanho, tentativa, classe_erro=None):
+        if self.anotar is not None:
+            self.anotar("crm", "GET", url, status, (time.perf_counter() - inicio) * 1000, tamanho, tentativa, classe_erro)
+
     def _pedir(self, rota, parametros):
         url = f"{self.url_base}/api/v1/cvdw/{rota}?{urllib.parse.urlencode(parametros)}"
         for tentativa in range(1, TENTATIVAS + 1):
+            if self.teto_chamadas is not None and self.chamadas >= self.teto_chamadas:
+                raise ErroCrm(f"teto de {self.teto_chamadas} chamadas ao CRM nesta execução atingido na rota {rota}")
             self.limitador.aguardar_vez()
+            self.chamadas += 1
             pedido = urllib.request.Request(url, headers=self._cabecalhos, method="GET")
+            inicio = time.perf_counter()
             try:
                 with urllib.request.urlopen(pedido, timeout=self.tempo_limite) as resposta:
-                    return json.loads(resposta.read().decode("utf-8"))
+                    conteudo = resposta.read()
+                    self._anotar(url, resposta.status, inicio, len(conteudo), tentativa)
+                    return json.loads(conteudo.decode("utf-8"))
             except urllib.error.HTTPError as erro:
                 status = erro.code
                 erro.close()
+                self._anotar(url, status, inicio, None, tentativa, "HTTPError")
                 if status == 429 and tentativa < TENTATIVAS:
                     # O CRM bloqueia o minuto seguinte inteiro depois de estourar o limite.
                     registro_log.warning("crm limite estourado rota=%s pagina=%s; esperando %ss",
@@ -104,6 +120,7 @@ class ClienteCrm:
                                   "do usuário de integração do cliente") from None
                 raise ErroCrm(f"CRM respondeu {status} na rota {rota}") from None
             except (urllib.error.URLError, TimeoutError) as erro:
+                self._anotar(url, 0, inicio, None, tentativa, type(erro).__name__)
                 if tentativa < TENTATIVAS:
                     registro_log.warning("crm sem resposta rota=%s; tentativa %s", rota, tentativa)
                     self.dormir(5 * 3 ** (tentativa - 1))

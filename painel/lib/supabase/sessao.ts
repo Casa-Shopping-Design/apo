@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { NextRequest, NextResponse } from "next/server";
 import { lerConfiguracaoSupabase } from "./configuracao";
-import { sessaoExigeSegundoFator } from "./nivel-acesso";
+import { perfilOperador, sessaoExigeSegundoFator } from "./nivel-acesso";
 
 type CookieRenovado = { name: string; value: string; options: Parameters<NextResponse["cookies"]["set"]>[2] };
 
@@ -36,14 +36,20 @@ export async function lerNivelSessao(supabase: SupabaseClient): Promise<NivelSes
 }
 
 // O claim vem do hook app.claims_jwt. Com o hook desligado o JWT chega sem perfil, e quem responde é
-// app.perfil_atual, a função que o RLS usa. A consulta ao banco só roda quando o claim falta.
+// app.perfil_atual, a função que o RLS usa. A consulta ao banco só roda quando o claim falta. Quem não tem
+// vínculo nenhum pode ser o operador da plataforma, que mora em app.operador_plataforma: a segunda consulta
+// só roda nesse caso, então diretor e demais perfis não pagam por ela.
 async function lerPerfil(supabase: SupabaseClient, usuarioId: string | null, perfilClaim: unknown): Promise<PerfilSessao> {
   if (typeof perfilClaim === "string" && perfilClaim !== "") return { perfil: perfilClaim, perfilLido: true };
   if (usuarioId === null) return { perfil: null, perfilLido: true };
 
   const { data, error } = await supabase.schema("app").rpc("perfil_atual");
   if (error) return { perfil: null, perfilLido: false };
-  return { perfil: typeof data === "string" ? data : null, perfilLido: true };
+  if (typeof data === "string" && data !== "") return { perfil: data, perfilLido: true };
+
+  const operador = await supabase.schema("app").rpc("e_operador");
+  if (operador.error) return { perfil: null, perfilLido: false };
+  return { perfil: operador.data === true ? perfilOperador : null, perfilLido: true };
 }
 
 // Sem resposta do Auth, assume que há fator: manda verificar em vez de abrir o cadastro de outro aparelho.

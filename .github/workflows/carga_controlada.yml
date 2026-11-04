@@ -1,0 +1,101 @@
+name: Carga controlada
+
+on:
+  # A cada 15 minutos, em minutos quebrados: o GitHub atrasa os agendamentos da hora cheia e pode pular
+  # passagens; a passagem seguinte admite o que ficou. Repositório sem commit por 60 dias tem o agendamento
+  # desligado pelo GitHub, e só um commit ou um disparo manual religam.
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+# Só leitura do repositório: tudo fala com o banco pela DATABASE_URL e nada escreve no GitHub.
+permissions:
+  contents: read
+
+jobs:
+  controlador:
+    name: Controlador da fila
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: controlador
+    # Duas passagens juntas não quebram nada (a reserva usa skip locked), mas gastariam minutos à toa.
+    concurrency:
+      group: controlador-cargas
+      cancel-in-progress: false
+    outputs:
+      admitidos: ${{ steps.controlar.outputs.admitidos }}
+      ha_admitidos: ${{ steps.controlar.outputs.ha_admitidos }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Dependências
+        run: pip install "psycopg[binary]==3.3.6" "python-dotenv==1.2.3"
+
+      - name: Expira, agenda, reserva e limpa
+        id: controlar
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/controlar_cargas.py --teto-global 3
+
+  carga:
+    name: Carga ${{ matrix.ambiente }}
+    needs: controlador
+    if: needs.controlador.outputs.ha_admitidos == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      # Mesmo número do --teto-global do controlador: é o teto global de cargas simultâneas.
+      max-parallel: 3
+      matrix:
+        include: ${{ fromJSON(needs.controlador.outputs.admitidos) }}
+    # Um Environment por cliente, cliente-<conta_origem>, com a credencial do ERP e do CRM dele.
+    environment: ${{ matrix.ambiente }}
+    # Duas cargas do mesmo tenant ao mesmo tempo apagariam o raw uma da outra.
+    concurrency:
+      group: carga-${{ matrix.tenant }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Dependências
+        run: pip install "psycopg[binary]==3.3.6" "python-dotenv==1.2.3"
+
+      - name: Carga do ERP
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ORIGEM_URL_BASE: ${{ secrets.ORIGEM_URL_BASE }}
+          ORIGEM_AUTENTICACAO: ${{ vars.ORIGEM_AUTENTICACAO }}
+          ORIGEM_USUARIO: ${{ secrets.ORIGEM_USUARIO }}
+          ORIGEM_SENHA: ${{ secrets.ORIGEM_SENHA }}
+          ORIGEM_TENANT: ${{ secrets.ORIGEM_TENANT }}
+          ORIGEM_CLIENT_ID: ${{ secrets.ORIGEM_CLIENT_ID }}
+          ORIGEM_CLIENT_SECRET: ${{ secrets.ORIGEM_CLIENT_SECRET }}
+          ORIGEM_CAMINHO_BULK: ${{ vars.ORIGEM_CAMINHO_BULK }}
+        run: python scripts/carregar_origem.py --tenant "${{ matrix.tenant }}" --pedido "${{ matrix.pedido }}"
+
+      # Sem CRM_URL_BASE no Environment o passo responde "nada a carregar" e sai com 0.
+      - name: Carga do CRM
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          CRM_URL_BASE: ${{ secrets.CRM_URL_BASE }}
+          CRM_EMAIL: ${{ secrets.CRM_EMAIL }}
+          CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
+          CRM_LIMITE_POR_MINUTO: ${{ vars.CRM_LIMITE_POR_MINUTO }}
+        run: python scripts/carregar_crm.py --tenant "${{ matrix.tenant }}" --pedido "${{ matrix.pedido }}"
+
+      # O carregador fecha o pedido; se o processo morreu antes disso, fecha aqui para liberar a vaga.
+      - name: Fecha o pedido se ficou aberto
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/controlar_cargas.py --encerrar-pedido "${{ matrix.pedido }}" --motivo "job terminou sem fechar o pedido"

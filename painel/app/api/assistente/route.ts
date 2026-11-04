@@ -10,6 +10,7 @@ import { reservarPergunta } from "@/lib/assistente/limite";
 import { montarTabela, redigirResposta } from "@/lib/assistente/responder";
 import { registrar, type CamposLog, type ResultadoLog } from "@/lib/log";
 import { mensagens } from "@/lib/mensagens";
+import { registrarRequisicaoPainel } from "@/lib/registro-requisicao";
 import { decidirDestino } from "@/lib/supabase/nivel-acesso";
 import { criarClienteServidor } from "@/lib/supabase/servidor";
 import { lerNivelSessao } from "@/lib/supabase/sessao";
@@ -72,17 +73,59 @@ function responderErro(status: number, erro: string, idRequisicao: string): Resp
   return Response.json({ ok: false, erro, idRequisicao }, { status, headers: { "cache-control": "no-store" } });
 }
 
+const rotaPainel = "/api/assistente";
+
+// Toda resposta, boa ou ruim, deixa a linha painel_api/entrada no monitor, com o resultado do log como classe
+// do erro. O registro roda depois da resposta e nunca a derruba; sem usuário na sessão ele não grava.
 export async function POST(request: Request): Promise<Response> {
   const inicio = performance.now();
   const idRequisicao = lerIdRequisicao(request);
+  const andamento = { resultado: null as ResultadoLog | null };
+  let resposta: Response;
+  try {
+    resposta = await responderPergunta(request, inicio, idRequisicao, andamento);
+  } catch (erro) {
+    registrarRequisicaoPainel({
+      sistema: "painel_api",
+      direcao: "entrada",
+      metodo: "POST",
+      rota: rotaPainel,
+      statusHttp: 500,
+      duracaoMs: Math.round(performance.now() - inicio),
+      classeErro: erro instanceof Error ? erro.name : "desconhecido",
+      idRequisicao,
+    });
+    throw erro;
+  }
+  registrarRequisicaoPainel({
+    sistema: "painel_api",
+    direcao: "entrada",
+    metodo: "POST",
+    rota: rotaPainel,
+    statusHttp: resposta.status,
+    duracaoMs: Math.round(performance.now() - inicio),
+    classeErro: resposta.status >= 400 ? (andamento.resultado ?? "erro") : null,
+    idRequisicao,
+  });
+  return resposta;
+}
+
+async function responderPergunta(
+  request: Request,
+  inicio: number,
+  idRequisicao: string,
+  andamento: { resultado: ResultadoLog | null },
+): Promise<Response> {
   const campos: CamposBase = { id_requisicao: idRequisicao, rota: "api/assistente", user_id: null, tenant_id: null };
-  const anotar = (resultado: ResultadoLog, extra: Partial<CamposLog> = {}, nivel: "info" | "warn" | "error" = "info") =>
+  const anotar = (resultado: ResultadoLog, extra: Partial<CamposLog> = {}, nivel: "info" | "warn" | "error" = "info") => {
+    andamento.resultado = resultado;
     registrar(nivel, "pergunta livre ao assistente", {
       ...campos,
       ...extra,
       resultado,
       duracao_ms: Math.round(performance.now() - inicio),
     });
+  };
 
   // getUser valida o token no Auth; getClaims dá o perfil e o tenant que o hook gravou no JWT validado.
   const supabase = await criarClienteServidor();

@@ -13,6 +13,10 @@ Uso:
   python scripts/carregar_crm.py --tenant <uuid>                 API do cliente
   python scripts/carregar_crm.py --tenant <uuid> --so-com-eventos   só se o webhook avisou algo
   python scripts/carregar_crm.py --tenant <uuid> --pasta dados/crm   arquivos da demo
+  python scripts/carregar_crm.py --tenant <uuid> --pedido <id>      chamadas vinculadas ao pedido de carga
+
+Cada chamada ao CRM deixa uma linha em app.requisicao_registro (metadados, sem token), gravada em lote no
+fim, e o teto de chamadas desta execução é a cota diária do CRM menos o que já foi gasto hoje (ADR 0023).
 """
 
 import argparse
@@ -35,6 +39,7 @@ from cliente_crm import (
     ClienteCrm,
     ErroCrm,
 )
+from registro_requisicoes import RegistroRequisicoes
 
 registro_log = logging.getLogger("carregar_crm")
 
@@ -255,7 +260,7 @@ def carregar(conexao, tenant, fonte, completa=False, so_com_eventos=False):
     return resumo
 
 
-def montar_fonte(pasta):
+def montar_fonte(pasta, anotar=None, teto_chamadas=None):
     if pasta:
         return FontePasta(pasta)
     url_base = os.environ.get("CRM_URL_BASE", "").strip()
@@ -263,8 +268,20 @@ def montar_fonte(pasta):
         return None
     limite = int(os.environ.get("CRM_LIMITE_POR_MINUTO") or LIMITE_PADRAO_POR_MINUTO)
     cliente = ClienteCrm(url_base, os.environ.get("CRM_EMAIL", ""), os.environ.get("CRM_TOKEN", ""),
-                         limite_por_minuto=limite)
+                         limite_por_minuto=limite, anotar=anotar, teto_chamadas=teto_chamadas)
     return FonteApi(cliente)
+
+
+def teto_crm_do_dia(conexao, tenant):
+    """Cota diária do CRM menos o que já foi gasto hoje; tenant sem configuração (demo) fica sem teto."""
+    with conexao.cursor() as cursor:
+        cursor.execute(
+            "select c.cota_diaria_crm - coalesce((select d.chamadas from app.consumo_requisicoes_dia d "
+            "where d.tenant_id = c.tenant_id and d.sistema = 'crm'), 0) "
+            "from app.origem_configuracao c where c.tenant_id = %s", (tenant,))
+        linha = cursor.fetchone()
+    conexao.rollback()
+    return None if linha is None else max(0, linha[0])
 
 
 def main(argumentos=None):
@@ -279,6 +296,8 @@ def main(argumentos=None):
     leitor.add_argument("--completa", action="store_true", help="ignora a marca e pede tudo de novo")
     leitor.add_argument("--so-com-eventos", action="store_true",
                         help="carrega só se o webhook avisou alguma mudança desde a última carga")
+    leitor.add_argument("--pedido", type=int, default=None,
+                        help="id do pedido em app.carga_pedido ao qual as chamadas ficam vinculadas")
     opcoes = leitor.parse_args(argumentos)
 
     try:
@@ -286,22 +305,27 @@ def main(argumentos=None):
     except ValueError:
         print("Informe o tenant com --tenant <uuid> ou TENANT_DEMO_ID no .env.", file=sys.stderr)
         return 2
-    try:
-        fonte = montar_fonte(opcoes.pasta)
-    except ErroCrm as erro:
-        print(f"Configuração do CRM incompleta: {erro}", file=sys.stderr)
-        return 2
-    if fonte is None:
-        print("CRM não configurado para este tenant (CRM_URL_BASE vazio); nada a carregar.")
-        return 0
 
-    try:
-        with psycopg.connect(os.environ["DATABASE_URL"]) as conexao:
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conexao:
+        registro = RegistroRequisicoes(conexao, tenant, opcoes.pedido)
+        try:
+            fonte = montar_fonte(opcoes.pasta, anotar=registro.anotar,
+                                 teto_chamadas=None if opcoes.pasta else teto_crm_do_dia(conexao, tenant))
+        except ErroCrm as erro:
+            print(f"Configuração do CRM incompleta: {erro}", file=sys.stderr)
+            return 2
+        if fonte is None:
+            print("CRM não configurado para este tenant (CRM_URL_BASE vazio); nada a carregar.")
+            return 0
+        try:
             resumo = carregar(conexao, tenant, fonte, completa=opcoes.completa,
                               so_com_eventos=opcoes.so_com_eventos)
-    except ErroCrm as erro:
-        print(f"Carga do CRM interrompida, nada foi gravado: {erro}", file=sys.stderr)
-        return 1
+        except ErroCrm as erro:
+            print(f"Carga do CRM interrompida, nada foi gravado: {erro}", file=sys.stderr)
+            return 1
+        finally:
+            # As chamadas feitas ficam registradas mesmo quando a carga é desfeita.
+            registro.gravar()
     if not resumo:
         print("Nenhum aviso do webhook do CRM pendente; nada a carregar.")
         return 0

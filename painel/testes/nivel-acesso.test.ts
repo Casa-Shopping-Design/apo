@@ -7,6 +7,7 @@ describe("perfilExigeSegundoFator", () => {
   it.each([
     ["diretor", true],
     ["financeiro", true],
+    ["operador", true],
     ["comercial", false],
     ["gerente_obra", false],
     ["leitura", false],
@@ -35,7 +36,7 @@ describe("decidirDestino sem usuário", () => {
 });
 
 describe("decidirDestino para perfis que exigem segundo fator", () => {
-  it.each(["diretor", "financeiro"])("%s em aal1 sem fator vai cadastrar", (perfil) => {
+  it.each(["diretor", "financeiro", "operador"])("%s em aal1 sem fator vai cadastrar", (perfil) => {
     expect(decidirDestino({ ...diretor, perfil })).toBe("cadastrar");
     expect(decidirDestino({ ...diretor, perfil, caminho: "/assistente" })).toBe("cadastrar");
   });
@@ -44,7 +45,7 @@ describe("decidirDestino para perfis que exigem segundo fator", () => {
     expect(decidirDestino({ ...diretor, perfil, temFator: true })).toBe("verificar");
   });
 
-  it.each(["diretor", "financeiro"])("%s em aal2 fica liberado", (perfil) => {
+  it.each(["diretor", "financeiro", "operador"])("%s em aal2 fica liberado", (perfil) => {
     expect(decidirDestino({ ...diretor, perfil, aal: "aal2", temFator: true })).toBe("liberado");
     expect(decidirDestino({ ...diretor, perfil, aal: "aal2", temFator: true, caminho: caminhosAcesso.cadastrar })).toBe("liberado");
   });

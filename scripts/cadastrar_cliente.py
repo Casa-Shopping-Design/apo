@@ -45,6 +45,10 @@ CAMPOS_CONFIGURACAO = (
     ("cota_diaria_rest", "cota_diaria_rest", int, "teto de chamadas REST por execução (padrão 1000)"),
     ("cota_diaria_bulk", "cota_diaria_bulk", int, "teto de chamadas Bulk por execução (padrão 600)"),
     ("timeout_segundos", "timeout_segundos", float, "tempo máximo por chamada (padrão 60)"),
+    ("modo_carga", "modo_carga", str, "manual (só pelo botão) ou agendado (horário diário mais o botão)"),
+    ("horario_carga", "horario_carga", str, "hora da carga agendada, hh:mm em America/Sao_Paulo"),
+    ("teto_pedidos_manuais_dia", "teto_pedidos_manuais_dia", int, "pedidos pelo botão por dia (padrão 6)"),
+    ("cota_diaria_crm", "cota_diaria_crm", int, "teto de chamadas ao CRM por dia (padrão 2000)"),
 )
 
 

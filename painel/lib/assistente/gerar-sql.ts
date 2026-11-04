@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import type { UsoModelo } from "@/lib/assistente/executar";
+import { registrarRequisicaoPainel, rotaModelo } from "@/lib/registro-requisicao";
 import {
   calcularUso,
   formatosColuna,
@@ -48,6 +49,34 @@ export function criarClienteModelo(): ClienteModelo | null {
   return new Anthropic({ apiKey: chave, timeout: 30_000, maxRetries: 1 });
 }
 
+// Status da resposta que falhou; sem resposta (rede, tempo esgotado) fica nulo e a classe do erro diz o que foi.
+function statusDoErro(erro: unknown): number | null {
+  return erro instanceof Anthropic.APIError && typeof erro.status === "number" ? erro.status : null;
+}
+
+// Uma chamada ao modelo com a linha de saída no monitor: rota fixa, status, duração e classe do erro, nunca o
+// conteúdo. A falha ao registrar não chega aqui; a exceção do modelo segue para quem chamou.
+export async function criarMensagemRegistrada(
+  cliente: ClienteModelo,
+  parametros: Anthropic.MessageCreateParamsNonStreaming,
+): Promise<Anthropic.Message> {
+  const inicio = performance.now();
+  const registro = { sistema: "anthropic", direcao: "saida", metodo: "POST", rota: rotaModelo } as const;
+  try {
+    const resposta = await cliente.messages.create(parametros);
+    registrarRequisicaoPainel({ ...registro, statusHttp: 200, duracaoMs: Math.round(performance.now() - inicio) });
+    return resposta;
+  } catch (erro) {
+    registrarRequisicaoPainel({
+      ...registro,
+      statusHttp: statusDoErro(erro),
+      duracaoMs: Math.round(performance.now() - inicio),
+      classeErro: erro instanceof Error ? erro.name : "desconhecido",
+    });
+    throw erro;
+  }
+}
+
 export function lerTexto(resposta: Anthropic.Message): string | null {
   if (resposta.stop_reason !== "end_turn") return null;
   const bloco = resposta.content.find((parte) => parte.type === "text");
@@ -79,7 +108,7 @@ export async function gerarSql(
   perfil: string | null,
   motivoRecusa?: string,
 ): Promise<SqlGerado> {
-  const resposta = await cliente.messages.create({
+  const resposta = await criarMensagemRegistrada(cliente, {
     model: modeloAssistente,
     max_tokens: 4000,
     system: [{ type: "text", text: montarSistemaGeracaoSql(perfil), cache_control: { type: "ephemeral" } }],

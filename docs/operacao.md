@@ -66,6 +66,24 @@ gh run watch
 
 A documentação do GitHub diz que, em repositório público, o agendamento é desativado depois de 60 dias sem atividade no repositório. Para repositório privado a documentação não cita a regra. Por isso, uma vez por mês, confira em Actions que a Carga noturna rodou nos últimos dias; se o workflow aparecer desativado, reative no botão "Enable workflow". A rota de saúde também acusa: com a carga parada, ela vira 503 depois de 26 horas.
 
+## Carga controlada por pedido (clientes reais)
+
+Cliente real não usa o cron da demo. O botão do painel chama `app.pedir_carga(tenant)`, que cria um pedido em `app.carga_pedido`; cliente em modo `agendado` ganha um pedido de agenda todo dia no horário cadastrado (`cadastrar_cliente.py --modo-carga agendado --horario-carga 02:30`). O workflow `carga_controlada.yml` roda `scripts/controlar_cargas.py` a cada 15 minutos: expira pedido parado, cria os de agenda, reserva até 3 pedidos (teto global, um por cliente, só com cota do dia aberta) e dispara um job por pedido no Environment `cliente-<conta_origem>`. O carregador marca progresso no pedido e grava cada chamada em `app.requisicao_registro`, que o monitor lê e que é limpa depois de 90 dias. A regra completa está na ADR 0023.
+
+Para testar um cliente sem o GitHub, com a credencial do ERP exportada no terminal:
+
+```bash
+export DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+python scripts/controlar_cargas.py --local
+```
+
+Para acompanhar, no SQL Editor:
+
+```sql
+select id, origem, situacao, etapa_atual, tarefas_concluidas, tarefas_total, erro_resumo, atualizado_em
+from app.carga_pedido order by id desc limit 20;
+```
+
 ## Excluir um cliente
 
 `app.excluir_tenant(uuid)` apaga o tenant e, pela chave estrangeira em cascata, tudo que tem `tenant_id` em `app`, `raw` e `staging`: obras, usuários vinculados, registros brutos, staging, marcas de carga, histórico de execuções, estudos de viabilidade e perguntas ao assistente. Só o dono do banco executa (`DATABASE_URL` do servidor ou SQL Editor); `anon` e `authenticated` não têm `execute`. A função só aceita tenant com `status = 'inativo'`, para a exclusão ser sempre o segundo passo, e espera qualquer carga do mesmo cliente terminar antes de apagar.
