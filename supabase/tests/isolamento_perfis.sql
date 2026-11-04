@@ -35,8 +35,8 @@ insert into staging.parcela_receber (tenant_id, centro_custo_id, id_origem, cont
 select is(
   app.claims_jwt('{"user_id": "0a000000-0000-4000-8000-00000000d001", "claims": {"app_metadata": {"provider": "email"}}}'::jsonb)
     -> 'claims' -> 'app_metadata',
-  '{"provider": "email", "tenant_id": "0e000000-0000-4000-8000-00000000000a", "perfil": "diretor"}'::jsonb,
-  'hook grava tenant_id e perfil em app_metadata sem apagar o que já havia'
+  '{"provider": "email", "tenant_id": "0e000000-0000-4000-8000-00000000000a", "perfil": "diretor", "exige_segundo_fator": true}'::jsonb,
+  'hook grava tenant_id, perfil e exige_segundo_fator em app_metadata sem apagar o que já havia'
 );
 select is(
   app.claims_jwt('{"user_id": "0a000000-0000-4000-8000-00000000ffff", "claims": {"app_metadata": {}}}'::jsonb)

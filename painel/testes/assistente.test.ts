@@ -52,8 +52,8 @@ const banco = {
   temFator: true,
   tenantNoClaim: "tenant-teste" as string | null,
   tenantNoBanco: null as string | null,
-  // null reserva normalmente; "limite" e "teto" simulam o P0001 que app.reservar_pergunta levanta.
-  recusaReserva: null as "limite" | "teto" | null,
+  // null reserva normalmente; "limite", "teto" e "franquia" simulam o P0001 que app.reservar_pergunta levanta.
+  recusaReserva: null as "limite" | "teto" | "franquia" | null,
   proximoId: 1,
   linhas: [] as Registro[],
   registros: [] as Registro[],
@@ -365,6 +365,18 @@ describe("rota do assistente com texto livre", () => {
     expect(corpo.erro).toMatch(/limite diário de uso do assistente/);
     expect(corpo.erro).not.toMatch(/por hora/);
     expect(modelo.chamadas).toHaveLength(0);
+  });
+
+  it("recusa com 429 e mensagem própria quando a franquia mensal do plano acabou", async () => {
+    banco.recusaReserva = "franquia";
+
+    const { status, corpo } = await perguntar("Quanto dinheiro próprio cada obra precisa no pior momento?");
+
+    expect(status).toBe(429);
+    expect(corpo.erro).toMatch(/franquia mensal/);
+    expect(corpo.erro).not.toMatch(/por hora|limite diário/);
+    expect(modelo.chamadas).toHaveLength(0);
+    expect(banco.registros).toHaveLength(0);
   });
 
   it("reserva a pergunta antes de chamar o modelo e conclui a reserva depois da execução", async () => {

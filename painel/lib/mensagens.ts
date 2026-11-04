@@ -43,6 +43,8 @@ export const mensagens = {
     perguntaInvalida: "Escreva a pergunta com 3 a 500 caracteres.",
     limite: "Limite de 30 perguntas por hora atingido. Tente de novo mais tarde ou use as perguntas prontas.",
     teto: "A construtora atingiu o limite diário de uso do assistente. As perguntas prontas continuam disponíveis; o assistente volta amanhã.",
+    franquia:
+      "A construtora usou toda a franquia mensal do assistente do plano contratado. As perguntas prontas continuam disponíveis; o assistente volta no próximo mês.",
     consultaInsegura: "Não consegui montar uma consulta segura para essa pergunta. Tente perguntar de outro jeito.",
     foraDoCatalogo:
       "Não encontrei nos dados do painel como responder a essa pergunta. Pergunte sobre caixa, recebimentos, pagamentos, vendas ou estoque das obras.",
@@ -115,6 +117,11 @@ export const mensagens = {
     cancelado: "Pedido cancelado. Ele continua no histórico e conta no limite do dia.",
     semBatimento:
       "Sem sinal do carregador há mais de 10 minutos. Passados 30, o pedido expira sozinho e pode ser pedido de novo.",
+  },
+  cliente: {
+    invalido: "Escolha um cliente da lista.",
+    semAcesso: "Cliente não encontrado ou sem acesso. Recarregue a página e tente de novo.",
+    indisponivel: "Não foi possível trocar de cliente agora. Tente de novo em alguns minutos.",
   },
   monitor: {
     restrita:

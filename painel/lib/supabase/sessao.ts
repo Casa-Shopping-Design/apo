@@ -10,46 +10,62 @@ export type NivelSessao = {
   usuarioId: string | null;
   perfil: string | null;
   perfilLido: boolean;
+  exigeSegundoFator: boolean | null;
   aal: string | null;
   temFator: boolean;
 };
 
-type PerfilSessao = Pick<NivelSessao, "perfil" | "perfilLido">;
+type VinculoSessao = Pick<NivelSessao, "perfil" | "perfilLido" | "exigeSegundoFator">;
 
 export type SessaoRenovada = NivelSessao & {
   cookiesRenovados: CookieRenovado[];
   cabecalhosSemCache: Record<string, string>;
 };
 
-// Lê sub, perfil e aal do JWT validado por getClaims. listFactors chama o Auth, então só roda para quem
-// ainda precisa do segundo fator; nos outros casos a resposta não muda o destino.
+// Lê sub, perfil, exigência do segundo fator e aal do JWT validado por getClaims. listFactors chama o Auth,
+// então só roda para quem ainda precisa do segundo fator; nos outros casos a resposta não muda o destino.
 export async function lerNivelSessao(supabase: SupabaseClient): Promise<NivelSessao> {
   const { data } = await supabase.auth.getClaims();
   const claims = data?.claims;
   const usuarioId = claims?.sub ?? null;
   const aal = typeof claims?.aal === "string" ? claims.aal : null;
-  const { perfil, perfilLido } = await lerPerfil(supabase, usuarioId, claims?.app_metadata?.perfil);
+  const appMetadata = claims?.app_metadata as { perfil?: unknown; exige_segundo_fator?: unknown } | undefined;
+  const { perfil, perfilLido, exigeSegundoFator } = await lerVinculo(supabase, usuarioId, appMetadata);
 
-  const precisaConsultarFator = usuarioId !== null && sessaoExigeSegundoFator(perfil, perfilLido) && aal !== "aal2";
+  const precisaConsultarFator =
+    usuarioId !== null && sessaoExigeSegundoFator(perfil, perfilLido, exigeSegundoFator) && aal !== "aal2";
   const temFator = precisaConsultarFator ? await temFatorVerificado(supabase) : false;
-  return { usuarioId, perfil, perfilLido, aal, temFator };
+  return { usuarioId, perfil, perfilLido, exigeSegundoFator, aal, temFator };
 }
 
-// O claim vem do hook app.claims_jwt. Com o hook desligado o JWT chega sem perfil, e quem responde é
-// app.perfil_atual, a função que o RLS usa. A consulta ao banco só roda quando o claim falta. Quem não tem
-// vínculo nenhum pode ser o operador da plataforma, que mora em app.operador_plataforma: a segunda consulta
-// só roda nesse caso, então diretor e demais perfis não pagam por ela.
-async function lerPerfil(supabase: SupabaseClient, usuarioId: string | null, perfilClaim: unknown): Promise<PerfilSessao> {
-  if (typeof perfilClaim === "string" && perfilClaim !== "") return { perfil: perfilClaim, perfilLido: true };
-  if (usuarioId === null) return { perfil: null, perfilLido: true };
+// Os claims vêm do hook app.claims_jwt. Com o hook desligado o JWT chega sem perfil, e quem responde é
+// app.perfil_atual e app.exige_segundo_fator, as funções que o RLS usa. As consultas só rodam quando o claim
+// falta. Quem não tem vínculo nenhum pode ser o operador da plataforma, que mora em app.operador_plataforma:
+// essa consulta só roda nesse caso, então diretor e demais perfis não pagam por ela.
+async function lerVinculo(
+  supabase: SupabaseClient,
+  usuarioId: string | null,
+  appMetadata: { perfil?: unknown; exige_segundo_fator?: unknown } | undefined,
+): Promise<VinculoSessao> {
+  const perfilClaim = appMetadata?.perfil;
+  const exigeClaim = appMetadata?.exige_segundo_fator;
+  if (typeof perfilClaim === "string" && perfilClaim !== "") {
+    return { perfil: perfilClaim, perfilLido: true, exigeSegundoFator: typeof exigeClaim === "boolean" ? exigeClaim : null };
+  }
+  if (usuarioId === null) return { perfil: null, perfilLido: true, exigeSegundoFator: null };
 
   const { data, error } = await supabase.schema("app").rpc("perfil_atual");
-  if (error) return { perfil: null, perfilLido: false };
-  if (typeof data === "string" && data !== "") return { perfil: data, perfilLido: true };
+  if (error) return { perfil: null, perfilLido: false, exigeSegundoFator: null };
+  if (typeof data === "string" && data !== "") {
+    // Exigência que o banco não respondeu cai na regra por perfil, que é o que valia antes da 0049.
+    const exigencia = await supabase.schema("app").rpc("exige_segundo_fator");
+    const exigeSegundoFator = !exigencia.error && typeof exigencia.data === "boolean" ? exigencia.data : null;
+    return { perfil: data, perfilLido: true, exigeSegundoFator };
+  }
 
   const operador = await supabase.schema("app").rpc("e_operador");
-  if (operador.error) return { perfil: null, perfilLido: false };
-  return { perfil: operador.data === true ? perfilOperador : null, perfilLido: true };
+  if (operador.error) return { perfil: null, perfilLido: false, exigeSegundoFator: null };
+  return { perfil: operador.data === true ? perfilOperador : null, perfilLido: true, exigeSegundoFator: null };
 }
 
 // Sem resposta do Auth, assume que há fator: manda verificar em vez de abrir o cadastro de outro aparelho.
@@ -67,6 +83,7 @@ export async function renovarSessao(request: NextRequest): Promise<SessaoRenovad
     usuarioId: null,
     perfil: null,
     perfilLido: true,
+    exigeSegundoFator: null,
     aal: null,
     temFator: false,
     cookiesRenovados: [],

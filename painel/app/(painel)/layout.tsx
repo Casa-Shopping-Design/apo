@@ -28,6 +28,7 @@ export default async function LayoutPainel({ children }: LayoutProps<"/">) {
         perfil={codigoPerfil === perfilOperador ? "Operador da plataforma" : identidade.perfil}
         codigoPerfil={codigoPerfil}
         construtora={identidade.construtora}
+        clientes={identidade.clientes}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <main className="flex flex-1 flex-col gap-10 px-4 py-6 md:px-12 md:py-9 print:p-0">{children}</main>
