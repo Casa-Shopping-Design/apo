@@ -18,6 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: controlador
+    # O agendamento só vale com a variável ligada no repositório, depois que o banco de destino tiver a 0044.
+    # Sem ela, o cron cairia no DATABASE_URL da demo e falharia a cada passagem. O disparo manual passa sempre.
+    if: github.event_name == 'workflow_dispatch' || vars.CARGA_CONTROLADA_ATIVA == 'true'
     # Duas passagens juntas não quebram nada (a reserva usa skip locked), mas gastariam minutos à toa.
     concurrency:
       group: controlador-cargas
