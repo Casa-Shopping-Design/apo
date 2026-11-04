@@ -121,6 +121,7 @@ export const mensagens = {
   cliente: {
     invalido: "Escolha um cliente da lista.",
     semAcesso: "Cliente não encontrado ou sem acesso. Recarregue a página e tente de novo.",
+    semSegundoFator: "Confirme o código do aplicativo autenticador antes de trocar de cliente. Recarregue a página para continuar.",
     indisponivel: "Não foi possível trocar de cliente agora. Tente de novo em alguns minutos.",
   },
   monitor: {

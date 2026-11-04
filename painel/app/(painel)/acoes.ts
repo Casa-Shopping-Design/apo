@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { idClienteValido } from "@/lib/cliente-ativo";
 import { registrar, type CamposLog } from "@/lib/log";
 import { mensagens } from "@/lib/mensagens";
+import { decidirDestino } from "@/lib/supabase/nivel-acesso";
+import { lerNivelSessao } from "@/lib/supabase/sessao";
 import { criarClienteServidor } from "@/lib/supabase/servidor";
 
 export type EstadoEscolhaCliente = { erro: string | null };
@@ -28,6 +30,13 @@ export async function escolherCliente(_estadoAnterior: EstadoEscolhaCliente, for
     return { erro: mensagens.cliente.semAcesso };
   }
   campos.user_id = dadosUsuario.user.id;
+
+  // A mesma barreira do layout: quem ainda deve o segundo fator não troca de cliente, nem para registrar a escolha.
+  const nivel = await lerNivelSessao(supabase);
+  if (decidirDestino({ ...nivel, caminho: "/" }) !== "liberado") {
+    registrar("warn", "troca de cliente sem segundo fator", { ...campos, resultado: "negado", motivo: "segundo_fator" });
+    return { erro: mensagens.cliente.semSegundoFator };
+  }
 
   const cliente = formulario.get("cliente");
   if (!idClienteValido(cliente)) {
