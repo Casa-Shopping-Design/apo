@@ -1,9 +1,10 @@
 name: Carga noturna
 
 on:
+  # Quinzenal, dias 1 e 15, por decisão do João em 04/11: carga diária não. Fora disso, só à mão.
   # 05:17 UTC são 02:17 em Brasília. Minuto quebrado porque o GitHub atrasa os agendamentos da hora cheia.
   schedule:
-    - cron: "17 5 * * *"
+    - cron: "17 5 1,15 * *"
   workflow_dispatch:
 
 # Só leitura do repositório: a carga fala com o banco pela DATABASE_URL e não escreve no GitHub.

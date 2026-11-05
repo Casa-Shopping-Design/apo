@@ -54,7 +54,7 @@ export const mensagens = {
   carga: {
     semConferencia: "Atenção: não foi possível conferir a data da última carga. Recarregue a página em alguns minutos.",
     semCarga: "Atenção: nenhuma carga de dados foi concluída ainda. Os números aparecem depois da primeira carga.",
-    atrasada: "Atenção: a carga de hoje não rodou.",
+    atrasada: "Atenção: a carga prevista não rodou.",
     numerosDe: "Os números são de",
     carregadaEm: "Dados carregados em",
     avisoDemo: "Dados da demo: valores gerados para demonstração, sem relação com uma construtora real.",

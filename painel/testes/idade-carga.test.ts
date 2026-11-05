@@ -8,13 +8,14 @@ describe("idade da carga", () => {
     expect(avaliarIdadeCarga("2026-09-27T05:31:00Z", agora)).toEqual({ idadeHoras: 6.5, atrasada: false });
   });
 
-  it("26 horas exatas ainda estão em dia", () => {
-    expect(avaliarIdadeCarga("2026-09-26T10:00:00Z", agora).atrasada).toBe(false);
+  it("carga quinzenal de 17 dias atrás, do dia 15 ao dia 1, ainda está em dia", () => {
+    expect(avaliarIdadeCarga("2026-09-10T12:00:00Z", agora)).toEqual({ idadeHoras: 408, atrasada: false });
+    expect(avaliarIdadeCarga("2026-09-10T10:00:00Z", agora).atrasada).toBe(false);
   });
 
-  it("mais de 26 horas sem sucesso conta como atrasada", () => {
-    expect(avaliarIdadeCarga("2026-09-26T09:59:00Z", agora)).toEqual({ idadeHoras: 26, atrasada: true });
-    expect(avaliarIdadeCarga("2026-09-26T06:00:00Z", agora)).toEqual({ idadeHoras: 30, atrasada: true });
+  it("mais de 17 dias e 2 horas sem sucesso conta como atrasada", () => {
+    expect(avaliarIdadeCarga("2026-09-10T09:59:00Z", agora).atrasada).toBe(true);
+    expect(avaliarIdadeCarga("2026-09-01T12:00:00Z", agora)).toEqual({ idadeHoras: 624, atrasada: true });
   });
 
   it("sem carga ou com data ilegível conta como atrasada", () => {
