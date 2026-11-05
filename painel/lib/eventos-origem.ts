@@ -155,6 +155,8 @@ export type EventoRecebido = {
   idEvento: string;
   tipoEvento: string;
   ids: IdsEvento;
+  // IP de quem chamou, só para a linha do monitor; nulo quando o cabeçalho não traz um IP válido.
+  ip: string | null;
 };
 
 export type ResultadoRegistro = "gravado" | "negado" | "limite";
@@ -175,6 +177,7 @@ export async function registrarEvento(evento: EventoRecebido): Promise<Resultado
     p_id_evento: evento.idEvento,
     p_tipo_evento: evento.tipoEvento,
     p_ids: evento.ids,
+    p_ip: evento.ip,
   });
   if (error) {
     if (error.code === CODIGO_LIMITE || status === 429) return "limite";

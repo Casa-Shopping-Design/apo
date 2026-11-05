@@ -93,13 +93,13 @@ select ok(
   has_function_privilege('authenticated', 'app.pedir_carga(uuid)', 'execute')
     and has_function_privilege('authenticated', 'app.cancelar_pedido(bigint)', 'execute')
     and has_function_privilege('authenticated', 'app.e_operador()', 'execute')
-    and has_function_privilege('authenticated', 'app.registrar_requisicao_painel(text, text, text, text, integer, integer, integer, text)', 'execute')
+    and has_function_privilege('authenticated', 'app.registrar_requisicao_painel(text, text, text, text, integer, integer, integer, text, inet, uuid)', 'execute')
     and not has_function_privilege('anon', 'app.pedir_carga(uuid)', 'execute')
     and not has_function_privilege('anon', 'app.cancelar_pedido(bigint)', 'execute')
     and not has_function_privilege('anon', 'app.e_operador()', 'execute')
     and not has_function_privilege('public', 'app.pedir_carga(uuid)', 'execute'),
   'pedir_carga, cancelar_pedido, e_operador e o registro do painel são do usuário logado, não do anônimo');
-select ok(has_function_privilege('anon', 'app.registrar_evento_origem(text, text, text, text, jsonb)', 'execute')
+select ok(has_function_privilege('anon', 'app.registrar_evento_origem(text, text, text, text, jsonb, inet)', 'execute')
   and not has_function_privilege('anon', 'app.aceitar_evento_origem(text, text, text, text, jsonb)', 'execute'),
   'o webhook continua chamando registrar_evento_origem; o corpo renomeado é interno');
 select ok(
@@ -383,8 +383,11 @@ reset role;
 set local role anon;
 select throws_ok($$select * from app.listar_clientes_operador()$$, '42501', null, 'anon não lista clientes');
 reset role;
--- As linhas extras de A saem para as seções seguintes contarem como antes.
+-- As linhas extras de A saem para as seções seguintes contarem como antes. Desde a 0053 só a retenção apaga,
+-- então o teste liga a mesma variável da rotina.
+select set_config('app.retencao_em_andamento', 'sim', true);
 delete from app.requisicao_registro where rota in ('/public/api/v1/customers', '/api/v1/cvdw/leads', '/public/api/v1/bills', '/public/api/v1/antiga');
+select set_config('app.retencao_em_andamento', '', true);
 
 -- Registro vindo do painel: tenant e usuário saem da sessão
 select set_config('request.jwt.claims', '{"sub": "0a000000-0000-4000-8000-0000000000da", "role": "authenticated", "aal": "aal2"}', true);
@@ -413,7 +416,9 @@ select lives_ok($$select app.registrar_requisicao_painel('painel_api', 'entrada'
 reset role;
 select is((select count(*) from app.requisicao_registro where usuario_id = '0a000000-0000-4000-8000-0000000000db'), 1::bigint,
   'a linha do outro usuário entrou');
+select set_config('app.retencao_em_andamento', 'sim', true);
 delete from app.requisicao_registro where rota = '/api/saude' and usuario_id is not null;
+select set_config('app.retencao_em_andamento', '', true);
 select is((select (tenant_id::text, usuario_id::text, metodo, direcao) from app.requisicao_registro where sistema = 'anthropic'),
   ('0e000000-0000-4000-8000-0000000000a1'::text, '0a000000-0000-4000-8000-0000000000da'::text, 'POST'::text, 'saida'::text),
   'a linha do painel leva o tenant e o usuário da sessão, com o método em maiúsculas');
@@ -533,17 +538,17 @@ select is(app.criar_pedidos_agendados(), 0, 'tenant inativo não ganha pedido de
 update app.tenant set status = 'ativo' where id = '0e000000-0000-4000-8000-0000000000b1';
 select is(app.criar_pedidos_agendados(), 1, 'reativado, o tenant ganha o pedido de agenda na passagem seguinte');
 
--- Retenção em lotes
+-- Retenção em lotes, pelo prazo de app.retencao_registro (7 dias desde a 0053)
 insert into app.requisicao_registro (tenant_id, direcao, sistema, metodo, rota, registrado_em) values
   ('0e000000-0000-4000-8000-0000000000a1', 'saida', 'erp', 'GET', '/velha1', now() - interval '91 days'),
   ('0e000000-0000-4000-8000-0000000000a1', 'saida', 'erp', 'GET', '/velha2', now() - interval '92 days'),
   ('0e000000-0000-4000-8000-0000000000a1', 'saida', 'erp', 'GET', '/velha3', now() - interval '93 days'),
-  ('0e000000-0000-4000-8000-0000000000a1', 'saida', 'erp', 'GET', '/recente', now() - interval '89 days');
-select is(app.limpar_requisicoes_antigas(90, 2), 2, 'o primeiro lote apaga duas das três linhas vencidas');
-select is(app.limpar_requisicoes_antigas(90, 2), 1, 'o segundo lote apaga a que sobrou');
-select is(app.limpar_requisicoes_antigas(90, 2), 0, 'sem linha vencida não apaga nada');
+  ('0e000000-0000-4000-8000-0000000000a1', 'saida', 'erp', 'GET', '/recente', now() - interval '6 days');
+select is(app.limpar_requisicoes_antigas(2), 2, 'o primeiro lote apaga duas das três linhas vencidas');
+select is(app.limpar_requisicoes_antigas(2), 1, 'o segundo lote apaga a que sobrou');
+select is(app.limpar_requisicoes_antigas(2), 0, 'sem linha vencida não apaga nada');
 select is((select count(*) from app.requisicao_registro where rota in ('/velha1', '/velha2', '/velha3', '/recente')), 1::bigint,
-  'a linha com 89 dias fica');
+  'a linha com 6 dias, dentro do prazo de 7 da 0053, fica');
 
 -- Webhook deixa a linha de entrada
 insert into app.webhook_origem (tenant_id, origem, hash_token, ativo) values
@@ -561,8 +566,9 @@ select is((select (status_http, classe_erro) from app.requisicao_registro where 
   (401, 'recusado'::text), 'o aviso recusado com token certo deixa linha 401');
 select is(app.registrar_evento_origem('token-desconhecido-00000000000000000000000', 'erp', 'ev-ctl-3',
   'SALES_CONTRACT_CREATED', '{"salesContractId": 10}'), false, 'token desconhecido continua recusado');
-select is((select count(*) from app.requisicao_registro where sistema = 'webhook_erp'), 2::bigint,
-  'token desconhecido não deixa linha');
+select is((select (count(*), bool_or(tenant_id is null and classe_erro = 'token_desconhecido')) from app.requisicao_registro
+  where sistema = 'webhook_erp'), (3::bigint, true),
+  'token desconhecido deixa a linha sem cliente, com a classe token_desconhecido (0053)');
 select is((select count(*) from app.evento_origem where tenant_id = '0e000000-0000-4000-8000-0000000000a1'), 1::bigint,
   'a fila de eventos recebeu só o aviso válido');
 

@@ -1,12 +1,12 @@
 import {
   concluirPergunta,
   executarConsultaValidada,
-  lerChaveAssinatura,
   type LinhaConsulta,
   type UsoModelo,
 } from "@/lib/assistente/executar";
 import { criarClienteModelo, gerarSql, type ClienteModelo, type SqlGerado } from "@/lib/assistente/gerar-sql";
 import { reservarPergunta } from "@/lib/assistente/limite";
+import { lerChaveAssinatura } from "@/lib/chave-assinatura";
 import { montarTabela, redigirResposta } from "@/lib/assistente/responder";
 import { registrar, type CamposLog, type ResultadoLog } from "@/lib/log";
 import { mensagens } from "@/lib/mensagens";

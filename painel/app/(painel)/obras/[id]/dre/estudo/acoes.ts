@@ -1,11 +1,11 @@
 "use server";
 
 import { refresh } from "next/cache";
-import { headers } from "next/headers";
 import { sessaoGravaEstudo } from "@/lib/dre";
 import { lerFormularioAliquota, lerFormularioEstudo, type LeituraFormulario } from "@/lib/estudo-digitado";
 import { registrar, type CamposLog } from "@/lib/log";
 import { mensagens } from "@/lib/mensagens";
+import { comRegistroAcao, lerContextoRequisicao, rotaAcao } from "@/lib/registro-requisicao";
 import { criarClienteServidor } from "@/lib/supabase/servidor";
 import { lerNivelSessao } from "@/lib/supabase/sessao";
 
@@ -16,12 +16,10 @@ type ClienteServidor = Awaited<ReturnType<typeof criarClienteServidor>>;
 type ErroBanco = { code?: string; message?: string } | null;
 type CamposBase = Pick<CamposLog, "id_requisicao" | "rota" | "user_id" | "centro_custo_id">;
 
-const formatoUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const padraoPagina = "/obras/[id]/dre/estudo";
 
-// O proxy grava x-id-requisicao em toda requisição; sem ele (teste), o log ganha um id novo.
-async function lerIdRequisicao(): Promise<string> {
-  const doProxy = (await headers()).get("x-id-requisicao");
-  return doProxy && formatoUuid.test(doProxy) ? doProxy : crypto.randomUUID();
+async function lerIdRequisicao(): Promise<string | null> {
+  return (await lerContextoRequisicao()).idRequisicao;
 }
 
 // getUser valida o token no Auth; lerNivelSessao traz o perfil (claim do hook ou app.perfil_atual) e o aal.
@@ -66,6 +64,14 @@ function registrarRecusa(campos: CamposBase, leitura: LeituraFormulario<unknown>
 }
 
 export async function salvarEstudo(_estadoAnterior: EstadoEstudo, formulario: FormData): Promise<EstadoEstudo> {
+  return comRegistroAcao(rotaAcao(padraoPagina, "salvarEstudo"), () => executarEstudo(formulario));
+}
+
+export async function salvarAliquota(_estadoAnterior: EstadoAliquota, formulario: FormData): Promise<EstadoAliquota> {
+  return comRegistroAcao(rotaAcao(padraoPagina, "salvarAliquota"), () => executarAliquota(formulario));
+}
+
+async function executarEstudo(formulario: FormData): Promise<EstadoEstudo> {
   const campos: CamposBase = { id_requisicao: await lerIdRequisicao(), rota: "obras/dre/estudo", user_id: null, centro_custo_id: null };
   const recusa = (erro: string): EstadoEstudo => ({ erro, sucesso: null, versao: null });
 
@@ -101,7 +107,7 @@ export async function salvarEstudo(_estadoAnterior: EstadoEstudo, formulario: Fo
   return { erro: null, sucesso: mensagens.estudo.gravado, versao };
 }
 
-export async function salvarAliquota(_estadoAnterior: EstadoAliquota, formulario: FormData): Promise<EstadoAliquota> {
+async function executarAliquota(formulario: FormData): Promise<EstadoAliquota> {
   const campos: CamposBase = { id_requisicao: await lerIdRequisicao(), rota: "obras/dre/aliquota", user_id: null, centro_custo_id: null };
   const recusa = (erro: string): EstadoAliquota => ({ erro, sucesso: null });
 
