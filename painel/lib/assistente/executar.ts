@@ -1,5 +1,5 @@
 import "server-only";
-import { createHmac } from "node:crypto";
+import { assinarTexto, lerChaveAssinatura } from "@/lib/chave-assinatura";
 import { registrar, type CamposLog, type ResultadoLog } from "@/lib/log";
 import { criarClienteServidor } from "@/lib/supabase/servidor";
 import { validarSql } from "@/lib/validador-sql";
@@ -33,21 +33,11 @@ export type ConclusaoPergunta = {
 
 type CamposBase = Pick<CamposLog, "id_requisicao" | "rota" | "user_id" | "tenant_id">;
 
-// Sem a chave não há assinatura, e o banco recusa a consulta; melhor falhar aqui com o motivo no log.
-export function lerChaveAssinatura(): string | null {
-  const chave = process.env.ASSISTENTE_CHAVE_ASSINATURA;
-  return chave && chave.length >= 32 ? chave : null;
-}
-
-function assinar(chave: string, texto: string): string {
-  return createHmac("sha256", chave).update(texto).digest("hex");
-}
-
 // O prefixo e o id seguem app.concluir_pergunta: a assinatura do sql_gerado não serve para executar consulta
 // nem para outra pergunta. Sem texto ou sem chave, a trilha fica sem sql_gerado em vez de recusar a conclusão.
 export function assinarSqlGerado(chave: string | null, idPergunta: number, sqlGerado: string) {
   if (!chave || !sqlGerado) return { sql: null, assinatura: null };
-  return { sql: sqlGerado, assinatura: assinar(chave, `sql_gerado:${idPergunta}:${sqlGerado}`) };
+  return { sql: sqlGerado, assinatura: assinarTexto(chave, `sql_gerado:${idPergunta}:${sqlGerado}`) };
 }
 
 function somarUso(base: UsoModelo | undefined, extra: UsoModelo): UsoModelo {
@@ -126,7 +116,7 @@ export async function executarConsultaValidada(
   const inicio = performance.now();
   const { data, error } = await supabase
     .schema("marts")
-    .rpc("executar_consulta", { p_id_pergunta: idPergunta, p_sql: validacao.sql, p_assinatura: assinar(chave, validacao.sql) });
+    .rpc("executar_consulta", { p_id_pergunta: idPergunta, p_sql: validacao.sql, p_assinatura: assinarTexto(chave, validacao.sql) });
   const duracaoMs = Math.round(performance.now() - inicio);
   const execucao = { ...conclusaoBase, duracaoMs };
 

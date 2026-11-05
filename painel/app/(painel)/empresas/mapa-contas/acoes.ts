@@ -1,11 +1,11 @@
 "use server";
 
 import { refresh } from "next/cache";
-import { headers } from "next/headers";
 import { sessaoGravaEstudo } from "@/lib/dre";
 import { registrar, type CamposLog } from "@/lib/log";
 import { lerFormularioMapa, mensagemErroMapa, mensagemRecusaMapa, resultadoErroMapa } from "@/lib/mapa-contas";
 import { mensagemGravadas, mensagensMapa } from "@/lib/mensagens-empresa";
+import { comRegistroAcao, lerContextoRequisicao, rotaAcao } from "@/lib/registro-requisicao";
 import { criarClienteServidor } from "@/lib/supabase/servidor";
 import { lerNivelSessao } from "@/lib/supabase/sessao";
 
@@ -13,17 +13,14 @@ export type EstadoMapa = { erro: string | null; sucesso: string | null };
 
 type CamposBase = Pick<CamposLog, "id_requisicao" | "rota" | "user_id" | "linhas">;
 
-const formatoUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-async function lerIdRequisicao(): Promise<string> {
-  const doProxy = (await headers()).get("x-id-requisicao");
-  return doProxy && formatoUuid.test(doProxy) ? doProxy : crypto.randomUUID();
+export async function gravarMapaContas(_estadoAnterior: EstadoMapa, formulario: FormData): Promise<EstadoMapa> {
+  return comRegistroAcao(rotaAcao("/empresas/mapa-contas", "gravarMapaContas"), () => executarMapa(formulario));
 }
 
 // A Server Action é uma rota própria e não herda a conferência da página. getUser valida o token no Auth;
 // lerNivelSessao traz o perfil e o aal. A função do banco repete tudo, então aqui só se evita a chamada inútil.
-export async function gravarMapaContas(_estadoAnterior: EstadoMapa, formulario: FormData): Promise<EstadoMapa> {
-  const campos: CamposBase = { id_requisicao: await lerIdRequisicao(), rota: "empresas/mapa-contas", user_id: null };
+async function executarMapa(formulario: FormData): Promise<EstadoMapa> {
+  const campos: CamposBase = { id_requisicao: (await lerContextoRequisicao()).idRequisicao, rota: "empresas/mapa-contas", user_id: null };
   const recusa = (erro: string): EstadoMapa => ({ erro, sucesso: null });
 
   const supabase = await criarClienteServidor();

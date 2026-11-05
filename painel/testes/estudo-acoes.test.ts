@@ -11,6 +11,8 @@ vi.mock("pino", () => ({
   }),
 }));
 vi.mock("next/cache", () => ({ refresh: () => roteador.atualizacoes++ }));
+// A linha da ação no monitor fica agendada e não roda: o teste olha só as chamadas da própria ação.
+vi.mock("next/server", () => ({ after: () => {} }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers({ "x-id-requisicao": idRequisicao }) }));
 vi.mock("@/lib/dre", async () => await import("../lib/dre"));
 vi.mock("@/lib/estudo-digitado", async () => await import("../lib/estudo-digitado"));

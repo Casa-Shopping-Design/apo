@@ -1,8 +1,9 @@
 """Controlador da fila de cargas (migration 0044, ADR 0023).
 
 Uma passagem: expira pedido parado, cria o pedido de agenda de quem venceu o horário, reserva os pendentes que
-cabem no teto global e na cota do dia, apaga o registro de requisições com mais de 90 dias e imprime os
-admitidos em JSON, um por linha da matriz do workflow (pedido, tenant, nome do Environment cliente-<conta>).
+cabem no teto global e na cota do dia, apaga o registro de requisições e a auditoria mais velhos que o prazo
+de app.retencao_registro (migration 0053) e imprime os admitidos em JSON, um por linha da matriz do workflow
+(pedido, tenant, nome do Environment cliente-<conta>).
 Só precisa da DATABASE_URL; o GitHub não recebe token nenhum.
 
 Uso:
@@ -29,8 +30,8 @@ RAIZ = Path(__file__).resolve().parent.parent
 TETO_GLOBAL_PADRAO = 3
 MINUTOS_SEM_BATIMENTO = 30
 HORAS_PENDENTE = 24
-DIAS_RETENCAO = 90
 LOTE_RETENCAO = 10000
+FUNCOES_RETENCAO = {"requisicoes_apagadas": "app.limpar_requisicoes_antigas", "auditoria_apagada": "app.limpar_auditoria_antiga"}
 # Nome de Environment do GitHub: a conta de origem já é o subdomínio do ERP, só letras, dígitos e hífen.
 CONTA_VALIDA = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
@@ -52,14 +53,19 @@ def encerrar_pedido(conexao, pedido, motivo):
     return _um(conexao, "select app.concluir_pedido(%s, %s)", (pedido, motivo[:200]))
 
 
-def limpar_retencao(conexao, dias=DIAS_RETENCAO, lote=LOTE_RETENCAO):
+def _limpar_em_lotes(conexao, funcao, lote):
     """Um lote por transação até sobrar menos que um lote. O(n) nas linhas vencidas, pelo índice da data."""
     apagadas = 0
     while True:
-        lote_apagado = _um(conexao, "select app.limpar_requisicoes_antigas(%s, %s)", (dias, lote))
+        lote_apagado = _um(conexao, f"select {funcao}(%s)", (lote,))
         apagadas += lote_apagado
         if lote_apagado < lote:
             return apagadas
+
+
+def limpar_retencao(conexao, lote=LOTE_RETENCAO):
+    """Requisições e auditoria vencidas, pelo prazo que o banco guarda em app.retencao_registro."""
+    return {chave: _limpar_em_lotes(conexao, funcao, lote) for chave, funcao in FUNCOES_RETENCAO.items()}
 
 
 def reservar(conexao, teto_global):
@@ -84,7 +90,7 @@ def controlar(conexao, teto_global=TETO_GLOBAL_PADRAO, minutos_sem_batimento=MIN
         "agendados_criados": _um(conexao, "select app.criar_pedidos_agendados()"),
     }
     resultado["admitidos"] = reservar(conexao, teto_global)
-    resultado["requisicoes_apagadas"] = limpar_retencao(conexao) if limpar else 0
+    resultado.update(limpar_retencao(conexao) if limpar else dict.fromkeys(FUNCOES_RETENCAO, 0))
     return resultado
 
 

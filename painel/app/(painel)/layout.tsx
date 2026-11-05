@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { CarimboCarga } from "@/componentes/CarimboCarga";
 import { MenuLateral } from "@/componentes/MenuLateral";
 import { exigirIdentidade } from "@/lib/consultas/identidade";
+import { registrarPaginaPainel } from "@/lib/registro-requisicao";
 import { caminhosAcesso, decidirDestino, perfilOperador } from "@/lib/supabase/nivel-acesso";
 import { criarClienteServidor } from "@/lib/supabase/servidor";
 import { lerNivelSessao } from "@/lib/supabase/sessao";
@@ -17,8 +18,10 @@ async function exigirSegundoFator(): Promise<string | null> {
 }
 
 // O proxy já redireciona quem não entrou ou não passou pelo segundo fator; a checagem se repete aqui
-// porque proxy sozinho não protege rota.
+// porque proxy sozinho não protege rota. A entrada da página vai para o monitor depois da resposta; quem
+// não entrou não deixa linha, porque a função do banco exige usuário.
 export default async function LayoutPainel({ children }: LayoutProps<"/">) {
+  await registrarPaginaPainel();
   const identidade = await exigirIdentidade();
   const codigoPerfil = await exigirSegundoFator();
 

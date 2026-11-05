@@ -10,6 +10,7 @@ import {
   sha256Hex,
   tipoEventoCrm,
 } from "@/lib/eventos-origem";
+import { lerIpCliente } from "@/lib/registro-requisicao";
 
 // O CRM não autentica o disparo nem manda id do evento: o token vem na URL e o id é o hash do corpo.
 export async function POST(request: Request, contexto: { params: Promise<{ chave: string }> }) {
@@ -31,6 +32,7 @@ export async function POST(request: Request, contexto: { params: Promise<{ chave
       idEvento: sha256Hex(canonicalizar(corpo)),
       tipoEvento,
       ids,
+      ip: lerIpCliente(request.headers),
     });
     return respostaEvento(statusDoRegistro(resultado));
   } catch {
