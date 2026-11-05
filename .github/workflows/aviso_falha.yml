@@ -1,0 +1,61 @@
+name: Aviso de falha
+
+# Rotina agendada que falha não avisa ninguém: o GitHub só manda e-mail para quem mexeu no cron por último.
+# Aqui cada falha abre uma issue (ou comenta na que já está aberta), e a issue fecha quando a rotina volta a passar.
+on:
+  workflow_run:
+    workflows: ["Carga noturna", "Carga controlada", "Resumo semanal"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  issue:
+    name: Abrir ou fechar a issue da rotina
+    if: contains(fromJSON('["failure", "timed_out", "success"]'), github.event.workflow_run.conclusion)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      # Os dados da execução entram por env, nunca interpolados no script.
+      - name: Atualizar a issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ROTINA: ${{ github.event.workflow_run.name }}
+          CONCLUSAO: ${{ github.event.workflow_run.conclusion }}
+          ENDERECO: ${{ github.event.workflow_run.html_url }}
+          INICIO: ${{ github.event.workflow_run.run_started_at }}
+          GATILHO: ${{ github.event.workflow_run.event }}
+        run: |
+          set -euo pipefail
+          export TITULO="Falha na rotina: $ROTINA"
+          quando=$(TZ=America/Sao_Paulo date -d "$INICIO" '+%d/%m/%Y às %H:%M')
+          aberta=$(gh issue list --state open --limit 100 --json number,title \
+            --jq '[.[] | select(.title == env.TITULO)] | first | .number // empty')
+
+          if [ "$CONCLUSAO" = "success" ]; then
+            if [ -n "$aberta" ]; then
+              gh issue close "$aberta" --comment "A rotina voltou a passar em $quando (horário de Brasília): $ENDERECO"
+            fi
+            exit 0
+          fi
+
+          if [ -n "$aberta" ]; then
+            gh issue comment "$aberta" --body "Falhou de novo em $quando (horário de Brasília, $CONCLUSAO, disparo $GATILHO): $ENDERECO"
+            exit 0
+          fi
+
+          gh issue create --title "$TITULO" --body "$(cat <<CORPO
+          A rotina **$ROTINA** terminou com \`$CONCLUSAO\` em $quando (horário de Brasília), disparada por \`$GATILHO\`.
+
+          Execução: $ENDERECO
+
+          Abra a execução, veja qual passo falhou e, depois de corrigir, rode de novo pelo botão Re-run. A carga pode rodar de novo sem duplicar dados.
+
+          Esta issue fecha sozinha quando a rotina voltar a passar. Novas falhas entram como comentário aqui.
+          CORPO
+          )"
