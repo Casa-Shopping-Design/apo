@@ -12,9 +12,14 @@ A credencial e a URL do ERP vêm do ambiente; o resto da configuração vem de a
 do tenant (cadastrar_cliente.py). Depois do cadastro de empreendimentos, app.sincronizar_centros_custo
 cria ou atualiza as obras em app.centro_custo, antes de qualquer tarefa que peça dado por obra.
 
+Com --pedido, a carga marca início, etapa, progresso e fim do pedido em app.carga_pedido, e cada chamada à
+API deixa uma linha em app.requisicao_registro, gravada em lote no fim de cada tarefa. O teto desta execução é
+o menor entre a cota configurada e o que resta no dia (ADR 0023). Sem --pedido, só o registro de chamadas muda.
+
 Uso:
     python scripts/carregar_origem.py
     python scripts/carregar_origem.py --tenant <uuid>
+    python scripts/carregar_origem.py --tenant <uuid> --pedido <id>
 """
 
 import argparse
@@ -36,7 +41,9 @@ from configuracao_origem import (  # noqa: E402
     CHAVE_SOBRESCRITA, SemConfiguracao, ler_configuracao, sobrescrever_pelo_ambiente,
 )
 from configuracao_origem import opcoes_de_ambiente as opcoes_so_do_ambiente  # noqa: E402
+from pedido_carga import AcompanhamentoPedido, SemAcompanhamento  # noqa: E402
 from registro_execucao import RegistroExecucao  # noqa: E402
+from registro_requisicoes import RegistroRequisicoes, cota_restante  # noqa: E402
 
 log = logging.getLogger("carregar_origem")
 
@@ -613,6 +620,12 @@ class RepositorioBanco:
                     titulos[int(chave)] = True
         return titulos
 
+    def consumo_do_dia(self, tenant):
+        """Chamadas de saída já feitas hoje (dia de São Paulo), por sistema; desconta da cota desta execução."""
+        with self.conexao.cursor() as cur:
+            cur.execute("select sistema, chamadas from app.consumo_requisicoes_dia where tenant_id = %s", (tenant,))
+            return dict(cur.fetchall())
+
     def gravar_modo(self, tenant, so_rest):
         with self.conexao.transaction(), self.conexao.cursor() as cur:
             cur.execute(
@@ -1157,26 +1170,42 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
     reverificar_dias = opcoes.pop("reverificar_bulk_dias", 30)
     fila_eventos = opcoes.pop("fila_eventos", None)
     limites_fila = {"rest": opcoes.pop("limite_fila_rest", 100), "bulk": opcoes.pop("limite_fila_bulk", 4)}
+    # Pedido e registro de requisições só existem na carga real; em memória os dois são nulos.
+    acompanhamento = opcoes.pop("acompanhamento", None) or SemAcompanhamento()
+    registro = opcoes.pop("registro_requisicoes", None)
+
+    def gravar_requisicoes():
+        if registro is not None:
+            registro.gravar()
+
     marcas, modo, obras = repositorio.ler_estado(tenant)
     ctx = Contexto(cliente=cliente, hoje=hoje, obras=obras, **opcoes)
     ctx.empresas_com_balancete = repositorio.ler_empresas_contabeis(tenant)
     ctx.titulos_receber = repositorio.ler_titulos_receber(tenant)
     usar_bulk = _usar_bulk(modo, hoje, reverificar_dias)
     relatorio = Relatorio(caminho="bulk" if usar_bulk else "so_rest")
+    plano = PLANO_BULK if usar_bulk else PLANO_SO_REST
+    # Etapas do pedido: fila do webhook (quando há), cada tarefa do plano e o staging.
+    acompanhamento.iniciar(len(plano) + (2 if fila_eventos is not None else 1))
     plano_fila = None
     if fila_eventos is not None:
+        acompanhamento.etapa("fila", len(plano) + 1)
         plano_fila = consumir_fila(ctx, fila_eventos, tenant, usar_bulk, limites_fila, relatorio)
+        gravar_requisicoes()
+        acompanhamento.tarefa_concluida()
     avisados = set(plano_fila.cobertos) if plano_fila else set()
     if plano_fila:
         ctx.compartilhado["titulos_receber_avisados"] = set(plano_fila.titulos_receber)
-    fila = [] if relatorio.cota_esgotada else ordenar_pela_marca(PLANO_BULK if usar_bulk else PLANO_SO_REST, marcas)
+    fila = [] if relatorio.cota_esgotada else ordenar_pela_marca(plano, marcas)
     tentadas = set()
     bulk_respondeu = False
     while fila:
         tarefa = fila.pop(0)
         if releitura_adiada(tarefa, marcas.get(tarefa.endpoint), hoje, avisados):
+            acompanhamento.tarefa_concluida()
             continue
         tentadas.add(tarefa.endpoint)
+        acompanhamento.etapa(tarefa.endpoint, len(fila) + 1)
         try:
             lote = LoteTarefa(tarefa, ESTRATEGIAS[tarefa.estrategia](ctx, tarefa, marcas.get(tarefa.endpoint)))
             contagens = repositorio.gravar_tarefa(tenant, lote, hoje)
@@ -1211,6 +1240,10 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
             if _sem_obras(tarefa, ctx, relatorio):
                 break
             continue
+        finally:
+            # Vale também para os continue e break de cima: a tarefa conta como passada e o buffer vai ao banco.
+            gravar_requisicoes()
+            acompanhamento.tarefa_concluida()
         ctx.concluidas.add(tarefa.endpoint)
         if tarefa.endpoint == TAREFA_OBRAS:
             sincronizar_obras(ctx, repositorio, tenant, relatorio)
@@ -1225,13 +1258,25 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
         marcar_cobertos(fila_eventos, tenant, plano_fila, _com_evento_equivalente(ctx.concluidas),
                         _com_evento_equivalente(tentadas), relatorio)
     if ctx.concluidas:
+        acompanhamento.etapa(ETAPA_STAGING, 0)
         try:
             repositorio.recarregar(tenant)
         except Exception as erro:
             log.error("recarga do staging falhou: %s", type(erro).__name__)
             relatorio.falhas.append(("staging", type(erro).__name__))
+    acompanhamento.tarefa_concluida()
+    gravar_requisicoes()
     relatorio.chamadas = dict(cliente.chamadas)
     return relatorio
+
+
+def resumo_do_pedido(relatorio):
+    """Texto curto do fim do pedido: só nomes de etapas, nunca a mensagem da API nem do banco."""
+    if relatorio.cota_esgotada:
+        return "cota diária esgotada"
+    if relatorio.falhas:
+        return ("falhou em: " + ", ".join(sorted({endpoint for endpoint, _ in relatorio.falhas})))[:200]
+    return None
 
 
 def opcoes_de_ambiente(ambiente=None):
@@ -1257,24 +1302,41 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser()
     parser.add_argument("--tenant", default=os.environ.get("TENANT_ID"))
+    parser.add_argument("--pedido", type=int, default=None,
+                        help="id do pedido em app.carga_pedido que esta execução atende (controlador)")
     args = parser.parse_args()
     if not args.tenant or not os.environ.get("DATABASE_URL"):
         sys.exit("Informe TENANT_ID (ou --tenant) e DATABASE_URL no .env")
-    try:
-        credencial = ConfiguracaoOrigem.de_ambiente()
-    except ValueError as erro:
-        sys.exit(str(erro))
     with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conexao:
+        acompanhamento = AcompanhamentoPedido(conexao, args.pedido) if args.pedido else SemAcompanhamento()
+        registro = RegistroRequisicoes(conexao, args.tenant, args.pedido, ao_anotar=acompanhamento.batimento)
         try:
+            credencial = ConfiguracaoOrigem.de_ambiente()
             configuracao = configuracao_do_tenant(conexao, args.tenant, os.environ)
         except (SemConfiguracao, ValueError) as erro:
+            # Só a classe: a mensagem de configuração pode citar a variável que falta, nunca o valor.
+            acompanhamento.concluir(f"carga não começou: {type(erro).__name__}")
             sys.exit(str(erro))
-        cliente = ClienteOrigem(replace(credencial, **configuracao.limites))
         repositorio = RepositorioComRegistro(conexao)
-        relatorio = executar(cliente, repositorio, args.tenant, date.today(), fila_eventos=repositorio,
-                             **configuracao.opcoes)
+        limites = cota_restante(configuracao.limites, repositorio.consumo_do_dia(args.tenant))
+        cliente = ClienteOrigem(replace(credencial, **limites), anotar=registro.anotar)
+        try:
+            relatorio = executar(cliente, repositorio, args.tenant, date.today(), fila_eventos=repositorio,
+                                 acompanhamento=acompanhamento, registro_requisicoes=registro,
+                                 **configuracao.opcoes)
+        except BaseException as erro:
+            registro.gravar()
+            if getattr(erro, "sqlstate", None) == "P0001" and "pedido" in str(erro):
+                # O controlador expirou o pedido no meio da carga: parar é o seguro, e não é defeito do código.
+                log.error("pedido %s foi fechado pelo controlador durante a carga; a carga para aqui", args.pedido)
+                sys.exit(1)
+            acompanhamento.concluir(f"carga interrompida: {type(erro).__name__}")
+            raise
         repositorio.limpar_eventos_processados(args.tenant, "erp")
+        acompanhamento.concluir(resumo_do_pedido(relatorio))
     print(relatorio.texto())
+    print(f"requisições registradas: {registro.gravadas}"
+          + (f", {registro.descartadas} descartadas" if registro.descartadas else ""))
     if relatorio.cota_esgotada:
         sys.exit(2)
     if relatorio.falhas:

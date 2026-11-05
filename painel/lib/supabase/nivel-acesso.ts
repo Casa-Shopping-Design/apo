@@ -8,7 +8,14 @@ export const caminhosAcesso = {
   verificar: "/seguranca/segundo-fator/verificar",
 } as const;
 
-const perfisComSegundoFator: ReadonlySet<string> = new Set(["diretor", "financeiro"]);
+// Código que o painel dá ao operador da plataforma, que não tem perfil em app.usuario_tenant (ADR 0023).
+// As políticas de pedido e de requisição exigem aal2 dele, então a barreira o trata como diretor.
+export const perfilOperador = "operador";
+
+// Desde a 0049 a exigência é por vínculo (app.usuario_tenant.exige_segundo_fator), que o hook emite no claim
+// exige_segundo_fator e app.exige_segundo_fator() devolve. Esta lista é o fallback quando nem o claim nem o
+// banco responderam, e repete o padrão que o gatilho da 0049 aplica a diretor e financeiro.
+const perfisComSegundoFator: ReadonlySet<string> = new Set(["diretor", "financeiro", perfilOperador]);
 
 // Rotas que nunca recebem redirecionamento: entrada, saída, manutenção, saúde e as próprias telas do segundo fator.
 const caminhosSemBarreira: ReadonlySet<string> = new Set(["/entrar", "/sair", "/manutencao", "/api/saude"]);
@@ -17,25 +24,32 @@ export function perfilExigeSegundoFator(perfil: string | null | undefined): bool
   return typeof perfil === "string" && perfisComSegundoFator.has(perfil);
 }
 
-// Perfil que ninguém conseguiu ler (JWT sem o claim e banco sem resposta) conta como perfil que exige:
-// na dúvida a barreira fecha, senão um diretor passaria só com a senha.
-export function sessaoExigeSegundoFator(perfil: string | null | undefined, perfilLido: boolean): boolean {
-  return !perfilLido || perfilExigeSegundoFator(perfil);
+// O vínculo decide (claim ou banco). Sem essa leitura, vale a regra por perfil; perfil que ninguém conseguiu
+// ler (JWT sem o claim e banco sem resposta) conta como perfil que exige: na dúvida a barreira fecha.
+export function sessaoExigeSegundoFator(
+  perfil: string | null | undefined,
+  perfilLido: boolean,
+  exigeSegundoFator: boolean | null | undefined = null,
+): boolean {
+  if (!perfilLido) return true;
+  if (typeof exigeSegundoFator === "boolean") return exigeSegundoFator || perfil === perfilOperador;
+  return perfilExigeSegundoFator(perfil);
 }
 
 export type ContextoAcesso = {
   usuarioId: string | null;
   perfil: string | null;
   perfilLido: boolean;
+  exigeSegundoFator?: boolean | null;
   aal: string | null;
   temFator: boolean;
   caminho: string;
 };
 
-export function decidirDestino({ usuarioId, perfil, perfilLido, aal, temFator, caminho }: ContextoAcesso): DestinoAcesso {
+export function decidirDestino({ usuarioId, perfil, perfilLido, exigeSegundoFator, aal, temFator, caminho }: ContextoAcesso): DestinoAcesso {
   if (caminhosSemBarreira.has(caminho) || caminho.startsWith("/api/")) return "liberado";
   if (!usuarioId) return "entrar";
-  if (!sessaoExigeSegundoFator(perfil, perfilLido) || aal === "aal2") return "liberado";
+  if (!sessaoExigeSegundoFator(perfil, perfilLido, exigeSegundoFator) || aal === "aal2") return "liberado";
 
   // Quem já tem fator verificado não pode cadastrar outro em aal1: a senha roubada bastaria para trocar o celular.
   const destino: DestinoAcesso = temFator ? "verificar" : "cadastrar";

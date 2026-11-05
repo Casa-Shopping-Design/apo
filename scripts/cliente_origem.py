@@ -21,6 +21,9 @@ log = logging.getLogger("cliente_origem")
 
 TAMANHO_PAGINA = 200
 
+# Nome do sistema no registro de requisições: REST e Bulk têm cotas separadas no ERP.
+SISTEMA_DO_TIPO = {"rest": "erp", "bulk": "erp_bulk"}
+
 # Nestas rotas a documentação dá 404 como requisição mal formada, não como consulta vazia; tratar como
 # vazio faria a carga avançar a marca e perder o que mudou.
 ROTAS_404_MALFORMADA = frozenset({"bills", "bills/by-change-date"})
@@ -138,9 +141,11 @@ class LimitadorJanela:
 
 
 class ClienteOrigem:
-    def __init__(self, config, relogio=time.monotonic, dormir=time.sleep):
+    def __init__(self, config, relogio=time.monotonic, dormir=time.sleep, anotar=None):
         self.config = config
         self.dormir = dormir
+        # Registro de requisições (registro_requisicoes.anotar): uma linha por tentativa, só metadados.
+        self.anotar = anotar
         self.limitadores = {
             "rest": LimitadorJanela(config.limite_rest_minuto, relogio, dormir),
             "bulk": LimitadorJanela(config.limite_bulk_minuto, relogio, dormir),
@@ -182,12 +187,16 @@ class ClienteOrigem:
             self.limitadores[tipo].aguardar()
             self.chamadas[tipo] += 1
             requisicao = urllib.request.Request(url, data=corpo, headers=cabecalhos, method=metodo)
+            inicio = time.perf_counter()
             try:
                 with urllib.request.urlopen(requisicao, timeout=self.config.timeout_segundos) as resposta:
-                    return json.loads(resposta.read().decode("utf-8") or "null")
+                    conteudo = resposta.read()
+                    self._anotar(tipo, metodo, url, resposta.status, inicio, len(conteudo), tentativa)
+                    return json.loads(conteudo.decode("utf-8") or "null")
             except urllib.error.HTTPError as erro:
                 texto = erro.read().decode("utf-8", errors="replace")
                 erro.close()
+                self._anotar(tipo, metodo, url, erro.code, inicio, len(texto), tentativa, "HTTPError")
                 if erro.code == 429 or (erro.code >= 500 and repetir_5xx):
                     espera = _espera_retry_after(erro.headers.get("Retry-After"), tentativa)
                     log.warning("%s em %s, nova tentativa em %.0f s", erro.code, caminho, espera)
@@ -199,11 +208,18 @@ class ClienteOrigem:
                     return None
                 raise ErroOrigem(erro.code, caminho) from None
             except (urllib.error.URLError, TimeoutError) as erro:
+                self._anotar(tipo, metodo, url, 0, inicio, None, tentativa, type(erro).__name__)
                 espera = _espera_retry_after(None, tentativa)
                 log.warning("falha de rede em %s (%s), nova tentativa em %.0f s",
                             caminho, type(erro).__name__, espera)
                 self.dormir(espera)
         raise ErroOrigem(0, caminho, f"sem resposta depois de {self.config.tentativas} tentativas")
+
+    def _anotar(self, tipo, metodo, url, status, inicio, tamanho, tentativa, classe_erro=None):
+        if self.anotar is None:
+            return
+        self.anotar(SISTEMA_DO_TIPO[tipo], metodo, url, status, (time.perf_counter() - inicio) * 1000,
+                    tamanho, tentativa + 1, classe_erro)
 
     def _get(self, tipo, caminho, parametros):
         consulta = urllib.parse.urlencode(_normalizar(parametros))

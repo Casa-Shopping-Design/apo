@@ -43,6 +43,8 @@ export const mensagens = {
     perguntaInvalida: "Escreva a pergunta com 3 a 500 caracteres.",
     limite: "Limite de 30 perguntas por hora atingido. Tente de novo mais tarde ou use as perguntas prontas.",
     teto: "A construtora atingiu o limite diário de uso do assistente. As perguntas prontas continuam disponíveis; o assistente volta amanhã.",
+    franquia:
+      "A construtora usou toda a franquia mensal do assistente do plano contratado. As perguntas prontas continuam disponíveis; o assistente volta no próximo mês.",
     consultaInsegura: "Não consegui montar uma consulta segura para essa pergunta. Tente perguntar de outro jeito.",
     foraDoCatalogo:
       "Não encontrei nos dados do painel como responder a essa pergunta. Pergunte sobre caixa, recebimentos, pagamentos, vendas ou estoque das obras.",
@@ -94,6 +96,40 @@ export const mensagens = {
     semAliquota:
       "Esta obra ainda não tem estudo de viabilidade com alíquota de imposto informada. Peça ao diretor ou ao financeiro para cadastrar.",
     restrita: "O seu perfil não abre a gestão de imposto. Peça ao diretor da construtora para liberar.",
+  },
+  pedido: {
+    restrita:
+      "Só diretor, financeiro e o operador da plataforma abrem a tela de carga. Peça ao diretor da construtora se precisar de uma carga fora de hora.",
+    indisponivel: "Não foi possível carregar os pedidos agora. Recarregue a página em alguns minutos.",
+    semPedidos: "Nenhum pedido de carga ainda. O primeiro aparece aqui depois de clicar em Atualizar dados agora.",
+    semCliente: "Escolha o cliente para ver os pedidos e pedir a carga.",
+    clienteDesconhecido: "Cliente não encontrado. Escolha um da lista.",
+    semPermissao: "Só diretor e financeiro, com o segundo fator confirmado, pedem e cancelam a carga.",
+    semSegundoFator: "Confirme o código do aplicativo autenticador antes de pedir a carga. Recarregue a página para continuar.",
+    teto: "Limite de pedidos manuais do dia atingido. A próxima carga pode ser pedida amanhã.",
+    foraDaFila: "Este pedido já saiu da fila e não pode mais ser cancelado.",
+    pedidoInvalido: "Pedido não encontrado. Recarregue a página e tente de novo.",
+    pedidoIndisponivel: "Não foi possível pedir a carga agora. Tente de novo em alguns minutos.",
+    cancelamentoIndisponivel: "Não foi possível cancelar agora. Tente de novo em alguns minutos.",
+    andamentoIndisponivel: "Não foi possível conferir o andamento agora. A tela tenta de novo sozinha.",
+    pedidoNaFila: "Pedido na fila. A carga começa quando o controlador admitir, em até 15 minutos.",
+    jaHaviaPedido: "Já havia um pedido aberto para este cliente; ele está acompanhado abaixo.",
+    cancelado: "Pedido cancelado. Ele continua no histórico e conta no limite do dia.",
+    semBatimento:
+      "Sem sinal do carregador há mais de 10 minutos. Passados 30, o pedido expira sozinho e pode ser pedido de novo.",
+  },
+  cliente: {
+    invalido: "Escolha um cliente da lista.",
+    semAcesso: "Cliente não encontrado ou sem acesso. Recarregue a página e tente de novo.",
+    semSegundoFator: "Confirme o código do aplicativo autenticador antes de trocar de cliente. Recarregue a página para continuar.",
+    indisponivel: "Não foi possível trocar de cliente agora. Tente de novo em alguns minutos.",
+  },
+  monitor: {
+    restrita:
+      "Só o diretor e o operador da plataforma abrem o monitor de requisições. Peça ao diretor da construtora se precisar conferir uma chamada.",
+    indisponivel: "Não foi possível carregar o monitor agora. Recarregue a página em alguns minutos.",
+    semLinhas: "Nenhuma requisição neste filtro. Alargue o período ou tire um filtro.",
+    periodoAjustado: "O período foi limitado a 90 dias, que é o tempo em que o registro fica guardado.",
   },
   paginas: {
     naoEncontradaTitulo: "Página não encontrada",
