@@ -3,7 +3,7 @@
 -- registro de evento do webhook (mesma lista fechada de eventos_origem.sql). Cria os próprios dados.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(17);
+select plan(19);
 
 -- Os tenants de fora do teste saem da conta da saúde, para o resultado não depender do seed.
 update app.tenant set status = 'inativo';
@@ -48,6 +48,22 @@ select results_eq(
   $$values (now() - interval '5 hours', 'ok')$$,
   'tenant inativo sai da conta da saúde'
 );
+
+-- 0052: cliente no modo manual carrega só pelo botão e não conta como atrasado.
+insert into app.tenant (id, razao_social) values ('0e000000-0000-4000-8000-0000000000e3', 'Construtora Carga Manual');
+insert into app.origem_configuracao (tenant_id, modo_carga) values ('0e000000-0000-4000-8000-0000000000e3', 'manual');
+select results_eq(
+  'select concluida_em, situacao from public.ultima_carga()',
+  $$values (now() - interval '5 hours', 'ok')$$,
+  'tenant no modo manual sem carga não deixa a saúde sem data'
+);
+insert into app.origem_configuracao (tenant_id, modo_carga) values ('0e000000-0000-4000-8000-0000000000e2', 'manual');
+select results_eq(
+  'select concluida_em, situacao from public.ultima_carga()',
+  $$values (null::timestamptz, 'sem_agenda')$$,
+  'sem nenhum tenant agendado a saúde diz sem_agenda'
+);
+delete from app.origem_configuracao where tenant_id = '0e000000-0000-4000-8000-0000000000e2';
 
 insert into app.carga_execucao (tenant_id, endpoint) values ('0e000000-0000-4000-8000-0000000000e2', 'staging');
 select is((select situacao from public.ultima_carga()), 'executando', 'staging em andamento aparece na situação');

@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
   }
 
   const { idadeHoras, atrasada } = avaliarIdadeCarga(carga.concluidaEm, new Date());
-  const ok = bancoResponde && !atrasada;
+  const ok = bancoResponde && (carga.situacao === "sem_agenda" || !atrasada);
 
   registrar(ok ? "info" : "error", ok ? "saude ok" : bancoResponde ? "carga atrasada" : "banco sem resposta", {
     id_requisicao: idRequisicao,

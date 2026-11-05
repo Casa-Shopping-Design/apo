@@ -69,6 +69,15 @@ describe("rota de saúde", () => {
     expect(cabecalhos.get("retry-after")).toBe("60");
   });
 
+  it("responde ok sem idade quando nenhum cliente tem carga agendada", async () => {
+    banco.carga = { concluidaEm: null, situacao: "sem_agenda" };
+
+    const { status, corpo } = await chamar();
+
+    expect(status).toBe(200);
+    expect(corpo).toEqual({ ok: true, idade_horas: null });
+  });
+
   it("responde 503 sem idade quando o banco não responde", async () => {
     banco.falha = true;
 

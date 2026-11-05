@@ -44,3 +44,5 @@ O que fica para depois:
 - Linha do webhook recusado por token desconhecido e do PT429, se o monitor precisar delas: a rota teria de gravar, e com a chave `anon` isso pede outra função com limite próprio.
 - `cota_diaria_crm` e os limites do CRM por minuto ainda não têm sondagem real; os padrões são os do `.env.example`.
 - Demo pela fila, para o `carga_noturna.yml` sair.
+
+**Atualização de 04/11/2026.** João decidiu que não há carga diária. A migration 0052 muda a agenda para os dias 1 e 15 de cada mês, no `horario_carga` do cliente: `app.criar_pedidos_agendados` cria o pedido quando não há pedido de agenda desde o último vencimento (`app.vencimento_agenda`), o que também recupera o dia perdido se o controlador ficar parado. `public.ultima_carga()` deixa de contar o cliente no modo manual, e sem nenhum cliente a conferir devolve `sem_agenda`, que a rota de saúde trata como ok.

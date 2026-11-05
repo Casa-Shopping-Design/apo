@@ -5,7 +5,7 @@
 -- clientes do operador, totais e lista paginada do monitor). Cria os próprios dados.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(145);
+select plan(150);
 
 insert into app.tenant (id, razao_social, conta_origem, status) values
   ('0e000000-0000-4000-8000-0000000000a1', 'Construtora Controlada A', 'conta-a', 'ativo'),
@@ -487,7 +487,22 @@ select is((select situacao from app.carga_pedido where tenant_id = '0e000000-000
   'o pendente recente continua na fila');
 select is(app.expirar_pedidos(30, 24), 0, 'segunda passagem não expira mais nada');
 
--- Agenda: horário já passado cria uma vez por dia; tenant com pedido aberto espera a próxima passagem
+-- Vencimento da agenda quinzenal (0052): o dia 1 ou 15 mais recente no horário, no fuso de São Paulo
+select is(app.vencimento_agenda('02:30', '2026-11-10 12:00-03'), '2026-11-01 02:30-03'::timestamptz,
+  'no meio da primeira quinzena vence o dia 1');
+select is(app.vencimento_agenda('02:30', '2026-11-15 02:00-03'), '2026-11-01 02:30-03'::timestamptz,
+  'no dia 15 antes do horário ainda vale o dia 1');
+select is(app.vencimento_agenda('02:30', '2026-11-15 03:00-03'), '2026-11-15 02:30-03'::timestamptz,
+  'no dia 15 depois do horário vence o dia 15');
+select is(app.vencimento_agenda('02:30', '2026-12-01 01:00-03'), '2026-11-15 02:30-03'::timestamptz,
+  'no dia 1 antes do horário vale o dia 15 do mês anterior');
+select is(app.vencimento_agenda('02:30', '2026-01-01 00:10-03'), '2025-12-15 02:30-03'::timestamptz,
+  'na virada do ano vale o dia 15 de dezembro');
+select ok(not has_function_privilege('anon', 'app.vencimento_agenda(time, timestamptz)', 'execute')
+  and not has_function_privilege('authenticated', 'app.vencimento_agenda(time, timestamptz)', 'execute'),
+  'o vencimento da agenda é interno do controlador');
+
+-- Agenda: vencido o dia 1 ou 15, cria uma vez por quinzena; tenant com pedido aberto espera a próxima passagem
 delete from app.carga_pedido where tenant_id = '0e000000-0000-4000-8000-0000000000d1';
 -- B ficou agendado às 02:30 no teste do check. Sem voltar todos a manual, a contagem dependeria da hora em que o teste roda.
 update app.origem_configuracao set modo_carga = 'manual', horario_carga = null;
@@ -495,7 +510,7 @@ update app.origem_configuracao set modo_carga = 'agendado', horario_carga = '00:
   where tenant_id in ('0e000000-0000-4000-8000-0000000000e1', '0e000000-0000-4000-8000-0000000000a1');
 -- Os pedidos de A são do botão, então A vence; E já teve pedido de agenda hoje (o concluído) e não ganha outro.
 select is(app.criar_pedidos_agendados(), 1, 'a passagem cria o pedido de agenda de A; E já teve o de agenda hoje');
-select is(app.criar_pedidos_agendados(), 0, 'a passagem seguinte não cria de novo no mesmo dia');
+select is(app.criar_pedidos_agendados(), 0, 'a passagem seguinte não cria de novo na mesma quinzena');
 select is((select count(*) from app.carga_pedido where origem = 'agenda' and situacao = 'pendente'
   and tenant_id = '0e000000-0000-4000-8000-0000000000a1' and solicitante_id is null), 1::bigint,
   'o pedido de agenda nasce pendente e sem solicitante');
@@ -509,12 +524,10 @@ select is((select app.concluir_pedido(id, 'x') from app.carga_pedido where tenan
 update app.carga_pedido set situacao = 'cancelado', terminado_em = now()
   where tenant_id = '0e000000-0000-4000-8000-0000000000f1';
 select is(app.criar_pedidos_agendados(), 1, 'liberado o tenant, a passagem seguinte cria o pedido de agenda');
-update app.origem_configuracao set modo_carga = 'agendado', horario_carga = '23:59:59'
+update app.origem_configuracao set modo_carga = 'agendado', horario_carga = '00:00'
   where tenant_id = '0e000000-0000-4000-8000-0000000000b1';
 update app.carga_pedido set situacao = 'cancelado', terminado_em = now() where tenant_id = '0e000000-0000-4000-8000-0000000000b1'
   and situacao in ('pendente', 'reservado', 'executando');
-select is(app.criar_pedidos_agendados(), 0, 'horário que ainda não chegou hoje não cria pedido');
-update app.origem_configuracao set horario_carga = '00:00' where tenant_id = '0e000000-0000-4000-8000-0000000000b1';
 update app.tenant set status = 'inativo' where id = '0e000000-0000-4000-8000-0000000000b1';
 select is(app.criar_pedidos_agendados(), 0, 'tenant inativo não ganha pedido de agenda');
 update app.tenant set status = 'ativo' where id = '0e000000-0000-4000-8000-0000000000b1';
