@@ -33,9 +33,15 @@ Sem `SENTRY_DSN` e `NEXT_PUBLIC_SENTRY_DSN` o SDK fica desligado, que é o norma
 
 ## Endereço e domínio
 
-O painel atende em `https://demo.apotecs.com.br`. O `apotecs.com.br` e o `www` redirecionam para ele, e `apo-casadesign.vercel.app` continua respondendo até os sócios trocarem o link. O domínio está no Registro.br, com o DNS nos servidores do próprio Registro.br, e os registros que apontam para a Vercel são os que a aba Domains do projeto `apo` mostra.
+O painel atende em `https://demo.apotecs.com.br`. O `apotecs.com.br`, o `www`, o `apo-casadesign.vercel.app` e o `obra-analitica.vercel.app` redirecionam para ele com 307, mantendo caminho e parâmetros, então link antigo continua funcionando. Os deploys de preview e as URLs de deploy da Vercel pedem login de membro da equipe (Deployment Protection, modo padrão); só os domínios de produção ficam abertos. O domínio está no Registro.br, com o DNS nos servidores do próprio Registro.br, e os registros que apontam para a Vercel são os que a aba Domains do projeto `apo` mostra.
 
 Trocar o endereço mexe em quatro lugares: Domains na Vercel, Site URL e Redirect URLs do Auth no Supabase, segredo `PAINEL_URL_BASE` no GitHub e `PAINEL_URL_PUBLICA` na hora de cadastrar webhooks. Deixe o endereço antigo nas Redirect URLs até ninguém mais entrar por ele, senão convite e troca de senha caem numa página que recusa o retorno.
+
+Na Vercel ficam só as variáveis que o painel lê, todas em Production: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `ANTHROPIC_API_KEY` e, para o assistente executar consulta, `ASSISTENTE_CHAVE_ASSINATURA`. Credencial de banco e do ERP fica nos segredos do GitHub Actions, que é quem roda a carga; o painel nunca as lê.
+
+## Auth no Supabase
+
+No projeto da demo: cadastro aberto e login anônimo desligados, confirmação de e-mail ligada, segundo fator por aplicativo ligado, gancho `app.claims_jwt` ativo para os claims do JWT. Senha com no mínimo 12 caracteres, troca de senha só com login recente e com a senha atual. Senha vazada, duração de sessão e tempo de inatividade só existem no plano Pro. O `supabase/config.toml` vale só para o banco local; cada um desses itens precisa ser repetido à mão num projeto novo.
 
 ## Firewall da Vercel
 
