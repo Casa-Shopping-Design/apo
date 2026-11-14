@@ -41,7 +41,7 @@ Na Vercel ficam só as variáveis que o painel lê, todas em Production: `NEXT_P
 
 ## Auth no Supabase
 
-No projeto da demo: cadastro aberto e login anônimo desligados, confirmação de e-mail ligada, segundo fator por aplicativo ligado, gancho `app.claims_jwt` ativo para os claims do JWT. Senha com no mínimo 12 caracteres, troca de senha só com login recente e com a senha atual. Senha vazada, duração de sessão e tempo de inatividade só existem no plano Pro. O `supabase/config.toml` vale só para o banco local; cada um desses itens precisa ser repetido à mão num projeto novo.
+No projeto da demo: cadastro aberto e login anônimo desligados, confirmação de e-mail ligada, segundo fator por aplicativo ligado, gancho `app.claims_jwt` ativo para os claims do JWT. Senha com no mínimo 12 caracteres, troca de senha só com login recente e com a senha atual. Login por link mágico e por código no e-mail desligado, porque o painel só entra com senha. Senha vazada, duração de sessão e tempo de inatividade só existem no plano Pro. O corte de sessão sem segundo fator em 15 minutos (MFA, "Limitar a duração das sessões AAL1") fica desligado: o painel só pede o segundo fator a diretor e financeiro, e o corte derrubaria o usuário de leitura que cadastrou autenticador. O `supabase/config.toml` vale só para o banco local; cada um desses itens precisa ser repetido à mão num projeto novo.
 
 ## Firewall da Vercel
 
