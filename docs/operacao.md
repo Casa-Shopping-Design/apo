@@ -39,7 +39,7 @@ Trocar o endereço mexe em quatro lugares: Domains na Vercel, Site URL e Redirec
 
 ## Firewall da Vercel
 
-O projeto `apo` tem uma regra, "Limite de login": `POST` em `/entrar`, `/seguranca/segundo-fator/cadastrar` e `/seguranca/segundo-fator/verificar`, no máximo 10 por minuto por IP, com resposta 429 depois disso. O plano Hobby aceita uma regra de limite só, por isso o assistente ficou de fora e conta apenas com a cota por usuário no banco. `/api/saude` e `/api/origem/*` ficam sem limite na borda, para o monitor e o ERP não serem barrados.
+O projeto `apo` tem uma regra, "Limite de login e assistente": `POST` em `/entrar`, `/seguranca/segundo-fator/cadastrar`, `/seguranca/segundo-fator/verificar` e `/api/assistente`, no máximo 10 por minuto por IP, com resposta 429 depois disso. O plano Hobby aceita uma regra de limite só, então as quatro rotas dividem a mesma contagem: dez perguntas ao assistente num minuto também travam o login daquele IP até o minuto virar. A cota por usuário do assistente no banco continua valendo por baixo. `/api/saude` e `/api/origem/*` ficam sem limite na borda, para o monitor e o ERP não serem barrados.
 
 Quem bater no limite espera um minuto. Para conferir a regra sem tentar login de verdade, mande 11 `POST` vazios para `/entrar`: o 11º volta 429. Mudança de regra vale na hora, sem novo deploy, e fica em Firewall, Audit Log.
 
