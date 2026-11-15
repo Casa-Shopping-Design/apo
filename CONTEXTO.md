@@ -103,7 +103,9 @@ O cliente piloto acompanha cada SPE numa planilha de Fontes e Usos (F&U, DRE soc
 Plano de 28/09/2026 para carga real do ERP, fila de webhooks e CRM como segunda origem: `docs/plano_origens.md` (grafo N1 a N8, migrations 0016 a 0019). As skills `erp-origem-api` e `crm-vendas-api` ficam em `.claude/skills/`.
 
 
-Situação em 06/10/2026. O APO está no ar em https://obra-analitica.vercel.app, com a `main` no merge do PR 9 (1faf515) e as migrations 0001 a 0034 aplicadas no projeto oficial `xwqwjawlbzvqpkxtqfld` (não existe 0028). Os três sócios entram com o perfil leitura, sem segundo fator, e veem a DRE de viabilidade, o gráfico da tendência e a gestão de imposto. Do plano APO estão publicadas as etapas 1 a 6, 9, 10, 11 e 13.
+Desde 14/11/2026 o painel atende em https://demo.apotecs.com.br. O repositório é `Casa-Shopping-Design/apo` e o projeto da Vercel é `apo`; os endereços antigos redirecionam ou seguem aceitos no Auth. Endereço e o que depende dele: `docs/operacao.md`, seção Endereço e domínio.
+
+Situação em 06/10/2026. O APO estava no ar em https://obra-analitica.vercel.app, com a `main` no merge do PR 9 (1faf515) e as migrations 0001 a 0034 aplicadas no projeto oficial `xwqwjawlbzvqpkxtqfld` (não existe 0028). Os três sócios entram com o perfil leitura, sem segundo fator, e veem a DRE de viabilidade, o gráfico da tendência e a gestão de imposto. Do plano APO estão publicadas as etapas 1 a 6, 9, 10, 11 e 13.
 
 Sem commit, no worktree `project-scope-31c6ef`: a 0035 (realizado contábil das linhas fora do orçamento, etapa 7), o saldo contábil da demo no gerador e na carga (etapa 8) e o roteiro, o ensaio e o checklist da etapa 14. A etapa 7 ainda pede a revisão de segurança da regra 16 do plano antes do commit. A etapa 12 (Onde agir agora) espera a pergunta P13 ao Braga.
 

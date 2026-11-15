@@ -31,6 +31,24 @@ Sem `SENTRY_DSN` e `NEXT_PUBLIC_SENTRY_DSN` o SDK fica desligado, que é o norma
 5. A CSP libera o host do DSN no `connect-src` sozinha (`painel/lib/politica-conteudo.ts`). Para conferir, abra o painel com o console do navegador aberto: não pode aparecer aviso de CSP com `sentry.io`.
 6. O projeto já nasce com a regra de alerta que manda e-mail no primeiro evento de cada erro novo. Confira em Alerts.
 
+## Endereço e domínio
+
+O painel atende em `https://demo.apotecs.com.br`. O `apotecs.com.br`, o `www`, o `apo-casadesign.vercel.app` e o `obra-analitica.vercel.app` redirecionam para ele com 307, mantendo caminho e parâmetros, então link antigo continua funcionando. Os deploys de preview e as URLs de deploy da Vercel pedem login de membro da equipe (Deployment Protection, modo padrão); só os domínios de produção ficam abertos. O domínio está no Registro.br, com o DNS nos servidores do próprio Registro.br, e os registros que apontam para a Vercel são os que a aba Domains do projeto `apo` mostra.
+
+Trocar o endereço mexe em quatro lugares: Domains na Vercel, Site URL e Redirect URLs do Auth no Supabase, segredo `PAINEL_URL_BASE` no GitHub e `PAINEL_URL_PUBLICA` na hora de cadastrar webhooks. Deixe o endereço antigo nas Redirect URLs até ninguém mais entrar por ele, senão convite e troca de senha caem numa página que recusa o retorno.
+
+Na Vercel ficam só as variáveis que o painel lê, todas em Production: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `ANTHROPIC_API_KEY` e, para o assistente executar consulta, `ASSISTENTE_CHAVE_ASSINATURA`. Credencial de banco e do ERP fica nos segredos do GitHub Actions, que é quem roda a carga; o painel nunca as lê.
+
+## Auth no Supabase
+
+No projeto da demo: cadastro aberto e login anônimo desligados, confirmação de e-mail ligada, segundo fator por aplicativo ligado, gancho `app.claims_jwt` ativo para os claims do JWT. Senha com no mínimo 12 caracteres, troca de senha só com login recente e com a senha atual. Login por link mágico e por código no e-mail desligado, porque o painel só entra com senha. Senha vazada, duração de sessão e tempo de inatividade só existem no plano Pro. O corte de sessão sem segundo fator em 15 minutos (MFA, "Limitar a duração das sessões AAL1") fica desligado: o painel só pede o segundo fator a diretor e financeiro, e o corte derrubaria o usuário de leitura que cadastrou autenticador. O `supabase/config.toml` vale só para o banco local; cada um desses itens precisa ser repetido à mão num projeto novo.
+
+## Firewall da Vercel
+
+O projeto `apo` tem uma regra, "Limite de login e assistente": `POST` em `/entrar`, `/seguranca/segundo-fator/cadastrar`, `/seguranca/segundo-fator/verificar` e `/api/assistente`, no máximo 10 por minuto por IP, com resposta 429 depois disso. O plano Hobby aceita uma regra de limite só, então as quatro rotas dividem a mesma contagem: dez perguntas ao assistente num minuto também travam o login daquele IP até o minuto virar. A cota por usuário do assistente no banco continua valendo por baixo. `/api/saude` e `/api/origem/*` ficam sem limite na borda, para o monitor e o ERP não serem barrados.
+
+Quem bater no limite espera um minuto. Para conferir a regra sem tentar login de verdade, mande 11 `POST` vazios para `/entrar`: o 11º volta 429. Mudança de regra vale na hora, sem novo deploy, e fica em Firewall, Audit Log.
+
 ## Rota de saúde
 
 `GET /api/saude` responde `{ ok, idade_horas }`, sem login; com o segredo `MONITOR_TOKEN` no cabeçalho `x-monitor-token` acrescenta `commit`, `ultima_carga_em` e `situacao_carga`. A data vem de `public.ultima_carga()`, a única função que o anônimo chama fora do webhook. Responde 503 quando o banco não responde ou quando algum tenant ativo está há mais de 17 dias e 2 horas sem carga concluída, o maior intervalo da carga quinzenal. O monitor externo chama a cada 5 minutos e manda e-mail na falha.
@@ -40,7 +58,7 @@ Com 503, olhe `idade_horas`: nulo com `ultima_carga_em` nulo quer dizer banco fo
 ### Como ligar o monitor externo
 
 1. Em uptimerobot.com, crie a conta no plano gratuito. O e-mail da conta é o que recebe os alertas.
-2. Add New Monitor, tipo HTTP(s), endereço `https://apo-casadesign.vercel.app/api/saude`, intervalo de 5 minutos.
+2. Add New Monitor, tipo HTTP(s), endereço `https://demo.apotecs.com.br/api/saude`, intervalo de 5 minutos.
 3. O monitor não precisa do `MONITOR_TOKEN`: o 503 já sai sem ele. O token só acrescenta commit e situação da carga na resposta, e serve para quem conferir à mão.
 4. Para conferir, use o botão de teste do monitor. Ele deve ver 200. O modo de manutenção não derruba a rota de saúde, então o alerta só vem com banco fora do ar ou carga parada por mais de 17 dias.
 
