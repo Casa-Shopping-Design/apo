@@ -4,11 +4,11 @@ import { assinarTexto, lerChaveAssinatura } from "@/lib/chave-assinatura";
 import { registrar } from "@/lib/log";
 import type { criarClienteServidor } from "@/lib/supabase/servidor";
 
-// Eventos que o usuário logado registra sobre a própria sessão em app.evento_auditoria (migration 0053).
+// Eventos que o usuário logado registra sobre a própria sessão em app.evento_auditoria (migrations 0053 e 0054).
+// Senha trocada não está aqui: quem grava é o gatilho do banco.
 export type EventoSessao =
   | "entrada"
   | "saida"
-  | "senha_trocada"
   | "segundo_fator_cadastrado"
   | "segundo_fator_removido"
   | "segundo_fator_recusado";

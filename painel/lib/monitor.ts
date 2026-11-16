@@ -1,7 +1,21 @@
 // Regras puras do monitor de requisições (app.requisicao_registro, migration 0044): leitura do filtro da URL,
 // endereços, leitura das linhas e paginação por chave. Os totais vêm prontos do banco.
 
-export const sistemas = ["erp", "erp_bulk", "crm", "anthropic", "webhook_erp", "webhook_crm", "painel_api"] as const;
+import { entreOpcoes, formatoInstante, formatoUuid, lerPeriodo, umValor, type BuscaUrl } from "./periodo-filtro";
+
+export { hojeSaoPaulo, somarDias } from "./periodo-filtro";
+
+export const sistemas = [
+  "erp",
+  "erp_bulk",
+  "crm",
+  "anthropic",
+  "webhook_erp",
+  "webhook_crm",
+  "painel_api",
+  "painel_pagina",
+  "painel_acao",
+] as const;
 export type Sistema = (typeof sistemas)[number];
 
 const rotulosSistema: Record<Sistema, string> = {
@@ -12,6 +26,8 @@ const rotulosSistema: Record<Sistema, string> = {
   webhook_erp: "Aviso do ERP",
   webhook_crm: "Aviso do CRM",
   painel_api: "API do painel",
+  painel_pagina: "Página do painel",
+  painel_acao: "Ação do painel",
 };
 
 export function rotuloSistema(sistema: string): string {
@@ -61,57 +77,15 @@ export type FiltroMonitor = {
 
 export const linhasPorPagina = 50;
 export const periodoPadraoDias = 7;
-// Retenção do registro no banco: pedir mais que isso só custa consulta.
+// Teto do período numa consulta. O prazo de guarda vem do banco (app.retencao_registro); este número só
+// segura a consulta se o prazo for ampliado além dele ou se o banco não responder.
 export const periodoMaximoDias = 90;
 
-const formatoData = /^\d{4}-\d{2}-\d{2}$/;
-const formatoUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// Chave da paginação como o PostgREST devolve o timestamptz, com ou sem fração de segundo.
-const formatoInstante = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
-
-const formatoDiaSaoPaulo = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" });
-
-export function hojeSaoPaulo(agora: Date): string {
-  return formatoDiaSaoPaulo.format(agora);
-}
-
-function dataValida(texto: string | undefined): string | null {
-  if (!texto || !formatoData.test(texto)) return null;
-  const data = new Date(`${texto}T00:00:00Z`);
-  return Number.isNaN(data.getTime()) || data.toISOString().slice(0, 10) !== texto ? null : texto;
-}
-
-// Aritmética de dias em UTC sobre a data pura; o fuso só entra ao decidir o dia de hoje.
-export function somarDias(data: string, dias: number): string {
-  const instante = new Date(`${data}T00:00:00Z`);
-  instante.setUTCDate(instante.getUTCDate() + dias);
-  return instante.toISOString().slice(0, 10);
-}
-
-function diferencaDias(de: string, ate: string): number {
-  return Math.round((new Date(`${ate}T00:00:00Z`).getTime() - new Date(`${de}T00:00:00Z`).getTime()) / 86_400_000);
-}
-
-function umValor(busca: Record<string, string | string[] | undefined>, chave: string): string | undefined {
-  const bruto = busca[chave];
-  return Array.isArray(bruto) ? bruto[0] : bruto;
-}
-
-function entreOpcoes<T extends string>(opcoes: readonly T[], valor: string | undefined): T | null {
-  return opcoes.find((opcao) => opcao === valor) ?? null;
-}
-
-// Período padrão: os últimos sete dias até hoje. Data ilegível cai no padrão; "de" depois de "ate" vira o
-// mesmo dia; período acima de 90 dias é encurtado e a tela avisa. Filtro fora da lista é ignorado.
-export function lerFiltroMonitor(busca: Record<string, string | string[] | undefined>, hoje: string): FiltroMonitor {
-  const ate = dataValida(umValor(busca, "ate")) ?? hoje;
-  let de = dataValida(umValor(busca, "de")) ?? somarDias(ate, -(periodoPadraoDias - 1));
-  if (de > ate) de = ate;
-  let periodoAjustado = false;
-  if (diferencaDias(de, ate) > periodoMaximoDias - 1) {
-    de = somarDias(ate, -(periodoMaximoDias - 1));
-    periodoAjustado = true;
-  }
+// prazoDias é o prazo de guarda lido do banco: pedir mais que isso só custa consulta. Filtro fora da lista é
+// ignorado.
+export function lerFiltroMonitor(busca: BuscaUrl, hoje: string, prazoDias: number | null = null): FiltroMonitor {
+  const maximo = Math.min(prazoDias && prazoDias > 0 ? prazoDias : periodoMaximoDias, periodoMaximoDias);
+  const periodo = lerPeriodo(busca, hoje, periodoPadraoDias, maximo);
 
   const cliente = umValor(busca, "cliente");
   const antesEm = umValor(busca, "antes_em");
@@ -119,15 +93,13 @@ export function lerFiltroMonitor(busca: Record<string, string | string[] | undef
   const chaveValida = !!antesEm && formatoInstante.test(antesEm) && Number.isInteger(antesId) && antesId > 0;
 
   return {
-    de,
-    ate,
+    ...periodo,
     sistema: entreOpcoes(sistemas, umValor(busca, "sistema")),
     direcao: entreOpcoes(direcoes, umValor(busca, "direcao")),
     faixa: entreOpcoes(faixas, umValor(busca, "faixa")),
     cliente: cliente && formatoUuid.test(cliente) ? cliente : null,
     antesEm: chaveValida ? antesEm : null,
     antesId: chaveValida ? antesId : null,
-    periodoAjustado,
   };
 }
 
@@ -161,6 +133,8 @@ export type Requisicao = {
   classeErro: string | null;
   pedidoId: number | null;
   registradoEm: string;
+  ip: string | null;
+  idRequisicao: string | null;
 };
 
 function inteiroOuNulo(valor: unknown): number | null {
@@ -184,7 +158,27 @@ export function lerRequisicao(linha: Record<string, unknown>): Requisicao {
     classeErro: typeof linha.classe_erro === "string" && linha.classe_erro !== "" ? linha.classe_erro : null,
     pedidoId: inteiroOuNulo(linha.pedido_id),
     registradoEm: String(linha.registrado_em),
+    ip: typeof linha.ip === "string" && linha.ip !== "" ? linha.ip : null,
+    idRequisicao: typeof linha.id_requisicao === "string" && formatoUuid.test(linha.id_requisicao) ? linha.id_requisicao : null,
   };
+}
+
+// Detalhe de uma linha: ela mesma (principal) e as que nasceram da mesma requisição do painel.
+export type DetalheRequisicao = { principal: Requisicao; relacionadas: Requisicao[] };
+
+export function montarDetalhe(linhas: Record<string, unknown>[]): DetalheRequisicao | null {
+  const principal = linhas.find((linha) => linha.principal === true);
+  if (!principal) return null;
+  return { principal: lerRequisicao(principal), relacionadas: linhas.filter((linha) => linha !== principal).map(lerRequisicao) };
+}
+
+export function lerIdRequisicaoMonitor(bruto: string | undefined): number | null {
+  if (!bruto || !/^[1-9]\d{0,15}$/.test(bruto)) return null;
+  return Number(bruto);
+}
+
+export function enderecoDetalhe(id: number): string {
+  return `/monitor/${id}`;
 }
 
 export type ResumoRequisicoes = {
