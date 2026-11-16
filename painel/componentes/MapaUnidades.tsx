@@ -1,8 +1,11 @@
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { IndicadorVgv } from "@/componentes/IndicadorVgv";
 import type { ValoresVgv } from "@/lib/consultas/posicao";
 import { formatarData, formatarReal } from "@/lib/formatar";
 import {
+  enderecoFiltroSituacao,
+  filtrarGrade,
   montarGrade,
   rotuloAndar,
   rotulosOrigemValor,
@@ -124,16 +127,53 @@ function CelulaUnidade({
   );
 }
 
-function Legenda() {
+// A legenda é o filtro: cada situação liga ou desliga no clique, e nenhuma ligada mostra todas.
+// São links com o filtro na URL, então funciona sem JavaScript e o endereço pode ser guardado.
+function FiltroSituacao({
+  base,
+  filtro,
+  totais,
+}: {
+  base: string;
+  filtro: SituacaoUnidade[];
+  totais: Record<SituacaoUnidade, number>;
+}) {
+  const classeOpcao =
+    "flex min-h-11 items-center gap-1.5 rounded-lg border px-3 text-sm focus-visible:outline-3 focus-visible:outline-texto";
   return (
-    <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm" aria-label="Legenda das situações">
-      {situacoesUnidade.map((situacao) => (
-        <li key={situacao} className="flex items-center gap-1.5">
-          <IconeSituacao situacao={situacao} />
-          {rotulosSituacao[situacao].nome}
+    <nav aria-label="Filtrar unidades por situação" className="flex flex-col gap-2">
+      <p className="text-sm font-medium">Mostrar</p>
+      <ul className="flex flex-wrap gap-2">
+        <li>
+          <Link
+            href={base}
+            aria-current={filtro.length === 0 ? "true" : undefined}
+            className={`${classeOpcao} ${filtro.length === 0 ? "border-menu bg-menu text-menu-texto" : "border-borda bg-superficie"}`}
+          >
+            Todas
+          </Link>
         </li>
-      ))}
-    </ul>
+        {situacoesUnidade.map((situacao) => {
+          const ligada = filtro.includes(situacao);
+          return (
+            <li key={situacao}>
+              <Link
+                href={enderecoFiltroSituacao(base, filtro, situacao)}
+                aria-current={ligada ? "true" : undefined}
+                className={`${classeOpcao} ${ligada ? "border-menu bg-menu text-menu-texto" : "border-borda bg-superficie"}`}
+              >
+                <span className={ligada ? "rounded-full bg-superficie p-0.5" : undefined}>
+                  <IconeSituacao situacao={situacao} />
+                </span>
+                {rotulosSituacao[situacao].nome}
+                <span className="tabular-nums">{totais[situacao]}</span>
+                {ligada && <span className="sr-only">, filtro ligado</span>}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
   );
 }
 
@@ -166,19 +206,33 @@ function TotaisObra({ totais, vgv }: { totais: Record<SituacaoUnidade, number>; 
   );
 }
 
-export function MapaUnidades({ unidades, vgv }: { unidades: UnidadeMapa[]; vgv: ValoresVgv | null }) {
+export function MapaUnidades({
+  unidades,
+  vgv,
+  base,
+  filtro,
+}: {
+  unidades: UnidadeMapa[];
+  vgv: ValoresVgv | null;
+  base: string;
+  filtro: SituacaoUnidade[];
+}) {
   const grade = montarGrade(unidades);
+  const visiveis = filtrarGrade(grade, filtro);
 
   // Em tela larga os totais ficam ao lado da grade e acompanham a rolagem, no lugar da faixa vazia à direita.
   return (
     <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,56rem)_minmax(20rem,26rem)] xl:items-start">
       <div className="flex min-w-0 flex-col gap-6">
-        <Legenda />
-        <p className="text-sm text-suave">
+        <FiltroSituacao base={base} filtro={filtro} totais={grade.totais} />
+        <p className="text-sm text-suave" aria-live="polite">
+          {filtro.length > 0 && `${visiveis.exibidas} de ${unidades.length} unidades no filtro. `}
           Passe o mouse ou use a tecla Tab sobre uma unidade para ver o valor de hoje e de onde ele vem.
         </p>
 
-        {grade.blocos.map((bloco) => (
+        {visiveis.exibidas === 0 && <p>Nenhuma unidade nesta situação.</p>}
+
+        {visiveis.blocos.map((bloco) => (
           <section key={bloco.tipologia} className="flex flex-col gap-2">
             <h2 className="font-serif text-xl font-semibold">Tipologia {bloco.tipologia}</h2>
             <table className="w-full max-w-3xl table-fixed border-separate border-spacing-0 text-left xl:max-w-none">
@@ -205,7 +259,7 @@ export function MapaUnidades({ unidades, vgv }: { unidades: UnidadeMapa[]; vgv: 
                       {rotuloAndar(linha.andar)}
                     </th>
                     {linha.celulas.map((unidade, indice) =>
-                      unidade ? (
+                      typeof unidade === "object" ? (
                         <td key={unidade.unidade_id} className="p-0.5">
                           <CelulaUnidade
                             unidade={unidade}
@@ -214,8 +268,14 @@ export function MapaUnidades({ unidades, vgv }: { unidades: UnidadeMapa[]; vgv: 
                           />
                         </td>
                       ) : (
-                        <td key={`vazio-${bloco.posicoes[indice]}`} className="p-0.5">
-                          <span className="sr-only">Sem unidade</span>
+                        <td key={`${unidade}-${bloco.posicoes[indice]}`} className="p-0.5">
+                          {unidade === "fora_do_filtro" ? (
+                            <div className="min-h-12 rounded-md border border-dashed border-borda">
+                              <span className="sr-only">Fora do filtro</span>
+                            </div>
+                          ) : (
+                            <span className="sr-only">Sem unidade</span>
+                          )}
                         </td>
                       ),
                     )}
@@ -226,12 +286,12 @@ export function MapaUnidades({ unidades, vgv }: { unidades: UnidadeMapa[]; vgv: 
           </section>
         ))}
 
-        {grade.foraDoPadrao.length > 0 && (
+        {visiveis.foraDoPadrao.length > 0 && (
           <section className="flex flex-col gap-2">
             <h2 className="font-serif text-xl font-semibold">Outras unidades</h2>
             <p className="text-sm text-suave">Unidades cujo nome não segue o padrão tipologia, andar e posição.</p>
             <ul className="grid max-w-3xl grid-cols-3 gap-1 sm:grid-cols-4 xl:max-w-none">
-              {grade.foraDoPadrao.map((unidade, indice) => (
+              {visiveis.foraDoPadrao.map((unidade, indice) => (
                 <li key={unidade.unidade_id}>
                   <CelulaUnidade unidade={unidade} rotuloVisivel={unidade.unidade} alinharDireita={indice % 3 === 2} />
                 </li>
