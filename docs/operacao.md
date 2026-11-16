@@ -117,15 +117,15 @@ Antes de apagar, desligue o agendamento da carga desse cliente e guarde o que o 
 
 | Onde | Nome | Para quê |
 | --- | --- | --- |
-| GitHub, secrets do repositório | `DATABASE_URL` | Session pooler do projeto da demo, com a senha codificada |
-| GitHub, secrets do repositório | `TENANT_DEMO_ID` | Tenant que a carga grava |
+| GitHub, Environment `demo` | `DATABASE_URL` | Session pooler do projeto da demo, com a senha codificada |
+| GitHub, Environment `demo` | `TENANT_DEMO_ID` | Tenant que a carga grava |
 | GitHub, secrets do repositório | `RESEND_API_KEY` | Chave do Resend com permissão só de envio, usada pelo resumo semanal |
 | GitHub, secrets do repositório | `RESUMO_REMETENTE` | Remetente do resumo, no domínio verificado no Resend |
 | GitHub, secrets do repositório | `PAINEL_URL_BASE` | Endereço do painel em produção, com https, para o link do e-mail |
 | Vercel | `SENTRY_DSN` | Sentry no servidor |
 | Vercel | `NEXT_PUBLIC_SENTRY_DSN` | Sentry no navegador; o DSN só permite enviar eventos |
 
-Quando existir o banco do piloto, ele ganha secrets próprios, num environment do GitHub separado. O secret da demo nunca aponta para o piloto.
+Nenhuma `DATABASE_URL` fica nos secrets do repositório. Secret de Environment tem precedência sobre o do repositório, e o do repositório vira valor de reserva quando o Environment não tem o seu. Com a URL da demo no repositório, um Environment de cliente criado sem `DATABASE_URL` (o GitHub cria o Environment sozinho na primeira execução que o cita) mandaria a carga real para o banco da demo. Sem nenhuma no repositório, o job falha na conexão e nada é gravado. O banco de produção tem os Environments `controlador` e `cliente-<conta_origem>`, cada um com a própria `DATABASE_URL`. O da demo nunca aponta para produção.
 
 O CI (`.github/workflows/ci.yml`) não usa secret nenhum: sobe um Supabase local, cria dois usuários de teste com senha sorteada e apaga tudo no fim.
 
@@ -139,7 +139,7 @@ O script conecta com a `DATABASE_URL` do servidor, que não passa pelo RLS. Os n
 
 1. Crie a conta no Resend (o plano gratuito manda 100 e-mails por dia) e cadastre o domínio do remetente em Domains. O Resend mostra os registros DNS (SPF, DKIM e, de preferência, DMARC); publique no DNS do domínio e espere a verificação.
 2. Em API Keys, crie uma chave com permissão "Sending access", restrita ao domínio.
-3. No GitHub, Settings, Secrets and variables, Actions, cadastre `RESEND_API_KEY`, `RESUMO_REMETENTE` (por exemplo `APO <resumo@seudominio.com.br>`) e `PAINEL_URL_BASE`. A `DATABASE_URL` é a mesma da carga noturna.
+3. No GitHub, Settings, Secrets and variables, Actions, cadastre `RESEND_API_KEY`, `RESUMO_REMETENTE` (por exemplo `APO <resumo@seudominio.com.br>`) e `PAINEL_URL_BASE`. A `DATABASE_URL` é a mesma da carga noturna, no Environment `demo`.
 4. Rode uma vez à mão em Actions, Resumo semanal, Run workflow, e confira a caixa de entrada de um diretor e de um gerente.
 
 O log do job é uma linha JSON com contagens (destinatários, obras, alertas, enviados, falhas e o status HTTP das falhas). Não tem e-mail, nome de obra nem chave. Se o job rodar de novo no mesmo dia, o Resend descarta a repetição pela chave de idempotência, que vale 24 horas.
