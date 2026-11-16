@@ -9,7 +9,7 @@ import {
   type ObraResumo,
 } from "@/lib/consultas/unidades";
 import type { ValoresVgv } from "@/lib/consultas/posicao";
-import type { UnidadeMapa } from "@/lib/grade-unidades";
+import { lerFiltroSituacao, type UnidadeMapa } from "@/lib/grade-unidades";
 import { mensagens } from "@/lib/mensagens";
 
 export const metadata: Metadata = { title: "Mapa de unidades" };
@@ -39,8 +39,8 @@ function LinkListaObras() {
   );
 }
 
-export default async function PaginaMapaUnidades({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export default async function PaginaMapaUnidades({ params, searchParams }: PageProps<"/obras/[id]/unidades">) {
+  const [{ id }, { situacao }] = await Promise.all([params, searchParams]);
   const dados = await carregarMapa(id);
 
   if (dados === "erro") {
@@ -74,7 +74,12 @@ export default async function PaginaMapaUnidades({ params }: { params: Promise<{
       {dados.unidades.length === 0 ? (
         <p>{mensagens.unidades.semUnidades}</p>
       ) : (
-        <MapaUnidades unidades={dados.unidades} vgv={dados.vgv} />
+        <MapaUnidades
+          unidades={dados.unidades}
+          vgv={dados.vgv}
+          base={`/obras/${id}/unidades`}
+          filtro={lerFiltroSituacao(situacao)}
+        />
       )}
       <LinkListaObras />
     </>
