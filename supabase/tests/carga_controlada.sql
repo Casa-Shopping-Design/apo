@@ -317,12 +317,12 @@ select set_config('teste.pagina1', (select string_agg(id::text, ',' order by id 
 select is((select count(*) from app.listar_requisicoes(
   current_setting('teste.hoje_sp')::date - 1, current_setting('teste.hoje_sp')::date, null, null, null, null, null, null, 3)),
   3::bigint, 'a primeira página respeita o limite');
-select set_config('teste.chave_em', (select registrado_em::text from app.listar_requisicoes(
+select set_config('teste.chave_em', (select l.registrado_em::text from app.listar_requisicoes(
   current_setting('teste.hoje_sp')::date - 1, current_setting('teste.hoje_sp')::date, null, null, null, null, null, null, 3)
-  order by registrado_em, id limit 1), true);
-select set_config('teste.chave_id', (select id::text from app.listar_requisicoes(
+  l order by l.registrado_em, l.id limit 1), true);
+select set_config('teste.chave_id', (select l.id::text from app.listar_requisicoes(
   current_setting('teste.hoje_sp')::date - 1, current_setting('teste.hoje_sp')::date, null, null, null, null, null, null, 3)
-  order by registrado_em, id limit 1), true);
+  l order by l.registrado_em, l.id limit 1), true);
 select is((select count(*) from app.listar_requisicoes(
   current_setting('teste.hoje_sp')::date - 1, current_setting('teste.hoje_sp')::date, null, null, null, null,
   current_setting('teste.chave_em')::timestamptz, current_setting('teste.chave_id')::bigint, 200)),
