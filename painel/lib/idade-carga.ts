@@ -1,5 +1,6 @@
-// A carga noturna começa às 02:17 e leva menos de 30 minutos. Passadas 26 horas sem sucesso, a de hoje não rodou.
-export const LIMITE_HORAS_CARGA = 26;
+// A carga agendada roda nos dias 1 e 15. O maior intervalo é do dia 15 ao dia 1 de um mês de 31 dias, 17 dias;
+// com 2 horas de folga para a própria carga, passou disso sem sucesso, a prevista não rodou.
+export const LIMITE_HORAS_CARGA = 17 * 24 + 2;
 
 export type IdadeCarga = { idadeHoras: number | null; atrasada: boolean };
 

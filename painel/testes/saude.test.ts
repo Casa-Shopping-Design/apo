@@ -60,12 +60,12 @@ describe("rota de saúde", () => {
   });
 
   it("responde 503 com Retry-After quando a carga está atrasada", async () => {
-    banco.carga = { concluidaEm: new Date(Date.now() - 30 * 3_600_000).toISOString(), situacao: "falha" };
+    banco.carga = { concluidaEm: new Date(Date.now() - 20 * 24 * 3_600_000).toISOString(), situacao: "falha" };
 
     const { status, corpo, cabecalhos } = await chamar();
 
     expect(status).toBe(503);
-    expect(corpo).toEqual({ ok: false, idade_horas: 30 });
+    expect(corpo).toEqual({ ok: false, idade_horas: 480 });
     expect(cabecalhos.get("retry-after")).toBe("60");
   });
 

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  enderecoFiltroSituacao,
+  filtrarGrade,
+  lerFiltroSituacao,
   lerNomeUnidade,
   montarGrade,
   normalizarSituacao,
@@ -116,5 +119,72 @@ describe("montarGrade", () => {
     const grade = montarGrade([]);
     expect(grade.blocos).toEqual([]);
     expect(grade.foraDoPadrao).toEqual([]);
+  });
+});
+
+describe("lerFiltroSituacao", () => {
+  it("aceita uma ou várias situações e põe na ordem da legenda", () => {
+    expect(lerFiltroSituacao("reservada")).toEqual(["reservada"]);
+    expect(lerFiltroSituacao(["vendida", "disponivel"])).toEqual(["disponivel", "vendida"]);
+  });
+
+  it("ignora valor desconhecido e devolve vazio sem filtro", () => {
+    expect(lerFiltroSituacao(undefined)).toEqual([]);
+    expect(lerFiltroSituacao(["<script>", "vendida"])).toEqual(["vendida"]);
+  });
+});
+
+describe("enderecoFiltroSituacao", () => {
+  const base = "/obras/abc/unidades";
+
+  it("liga a situação mantendo as outras, na ordem da legenda", () => {
+    expect(enderecoFiltroSituacao(base, ["vendida"], "reservada")).toBe(`${base}?situacao=reservada&situacao=vendida`);
+  });
+
+  it("desliga a situação e volta ao endereço sem filtro quando não sobra nenhuma", () => {
+    expect(enderecoFiltroSituacao(base, ["reservada", "vendida"], "vendida")).toBe(`${base}?situacao=reservada`);
+    expect(enderecoFiltroSituacao(base, ["reservada"], "reservada")).toBe(base);
+  });
+});
+
+describe("filtrarGrade", () => {
+  const grade = montarGrade([
+    unidade("2Q-0201", "vendida"),
+    unidade("2Q-0202", "reservada"),
+    unidade("2Q-0101", "vendida"),
+    unidade("2Q-0104", "disponivel"),
+    unidade("3Q-0101", "vendida"),
+    unidade("Loja 1", "reservada"),
+  ]);
+
+  it("sem filtro mostra tudo", () => {
+    const filtrada = filtrarGrade(grade, []);
+    expect(filtrada.exibidas).toBe(6);
+    expect(filtrada.blocos.map((bloco) => bloco.tipologia)).toEqual(["2Q", "3Q"]);
+  });
+
+  it("esconde a unidade fora do filtro sem mudar as colunas e tira andar e tipologia sem nenhuma", () => {
+    const filtrada = filtrarGrade(grade, ["reservada"]);
+    expect(filtrada.exibidas).toBe(2);
+    expect(filtrada.blocos.map((bloco) => bloco.tipologia)).toEqual(["2Q"]);
+    const [bloco] = filtrada.blocos;
+    expect(bloco.posicoes).toEqual([1, 2, 4]);
+    expect(bloco.andares.map((linha) => linha.andar)).toEqual([2]);
+    expect(
+      bloco.andares[0].celulas.map((celula) => (typeof celula === "object" ? celula.unidade : celula)),
+    ).toEqual(["fora_do_filtro", "2Q-0202", "sem_unidade"]);
+    expect(filtrada.foraDoPadrao.map((celula) => celula.unidade)).toEqual(["Loja 1"]);
+  });
+
+  it("não mexe nos totais da obra", () => {
+    filtrarGrade(grade, ["disponivel"]);
+    expect(grade.totais).toEqual({ disponivel: 1, reservada: 2, proposta: 0, vendida: 3, indisponivel: 0 });
+  });
+
+  it("devolve zero quando nenhuma unidade está na situação", () => {
+    const filtrada = filtrarGrade(grade, ["proposta"]);
+    expect(filtrada.exibidas).toBe(0);
+    expect(filtrada.blocos).toEqual([]);
+    expect(filtrada.foraDoPadrao).toEqual([]);
   });
 });
