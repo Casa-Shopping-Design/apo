@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { motivoDoErroAuth, registrarEntradaRecusada, type MotivoEntradaRecusada } from "@/lib/auditoria";
+import { motivoDaRecusa, registrarEntradaRecusada, type MotivoEntradaRecusada } from "@/lib/auditoria";
 import { campoDesafio, lerChaveDesafio, lerRespostaDesafio } from "@/lib/desafio-entrada";
 import { registrar } from "@/lib/log";
 import { mensagens } from "@/lib/mensagens";
@@ -44,7 +44,7 @@ async function executarEntrada(formulario: FormData): Promise<EstadoEntrar> {
   });
   if (error) {
     // Login que falhou vai para a auditoria sem usuário e sem e-mail: só o HMAC, o motivo curto e o IP.
-    const motivo = motivoDoErroAuth(error);
+    const motivo = motivoDaRecusa(error);
     await registrarEntradaRecusada(supabase, email, motivo, contexto.ip, contexto.idRequisicao);
     return { erro: mensagemDoMotivo[motivo], email };
   }

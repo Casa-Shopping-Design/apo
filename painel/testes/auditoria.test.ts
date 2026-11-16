@@ -64,12 +64,12 @@ describe("assinarEntradaRecusada", () => {
   });
 });
 
-describe("motivoDoErroAuth", () => {
+describe("motivoDaRecusa", () => {
   it("reduz o erro do Auth a um código curto", async () => {
-    const { motivoDoErroAuth } = await modulo();
-    expect(motivoDoErroAuth({ code: "invalid_credentials", status: 400 })).toBe("credenciais_invalidas");
-    expect(motivoDoErroAuth({ code: "over_request_rate_limit", status: 429 })).toBe("muitas_tentativas");
-    expect(motivoDoErroAuth({ status: 500 })).toBe("indisponivel");
-    expect(motivoDoErroAuth({})).toBe("indisponivel");
+    const { motivoDaRecusa } = await modulo();
+    expect(motivoDaRecusa({ code: "invalid_credentials", status: 400 })).toBe("credenciais_invalidas");
+    expect(motivoDaRecusa({ code: "over_request_rate_limit", status: 429 })).toBe("muitas_tentativas");
+    expect(motivoDaRecusa({ status: 500 })).toBe("indisponivel");
+    expect(motivoDaRecusa({})).toBe("indisponivel");
   });
 });

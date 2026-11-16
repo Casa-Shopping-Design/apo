@@ -28,10 +28,10 @@ A ordem importa. Se o Supabase passar a exigir o desafio antes de a tela ter o w
 4. Na Vercel, no projeto do painel, crie `NEXT_PUBLIC_TURNSTILE_SITE_KEY` só em Production, com a Site Key. Faça um Redeploy, porque variável `NEXT_PUBLIC_` entra no build.
 5. Abra `/entrar` numa janela anônima. A caixa do Turnstile aparece abaixo da senha e o login continua funcionando, porque o Supabase ainda ignora a resposta.
 6. No Supabase, vá em Authentication, Attack Protection, ligue "Enable Captcha protection", escolha Turnstile, cole a Secret Key e salve.
-7. Entre de novo pela tela. Depois confira que o Auth recusa quem vem sem o desafio:
+7. Entre de novo pela tela. Depois confira que o Auth recusa quem vem sem o desafio. Guarde no terminal o identificador do projeto em `SUPABASE_REF` e a chave pública em `SUPABASE_CHAVE_PUBLICA`, e rode:
 
 ```bash
-curl -s -X POST "https://PROJETO.supabase.co/auth/v1/token?grant_type=password" -H "apikey: CHAVE_PUBLICA" -H "Content-Type: application/json" -d '{"email":"qualquer@teste.invalid","password":"qualquer-senha-123"}'
+curl -s -X POST "https://$SUPABASE_REF.supabase.co/auth/v1/token?grant_type=password" -H "apikey: $SUPABASE_CHAVE_PUBLICA" -H "Content-Type: application/json" -d '{"email":"qualquer@teste.invalid","password":"errada"}'
 ```
 
 A resposta tem de trazer `captcha_failed`. Se vier `invalid_credentials`, o desafio não está ligado no Supabase.

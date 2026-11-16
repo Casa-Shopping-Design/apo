@@ -26,7 +26,7 @@ export function hmacEmail(email: string, segredo: string | undefined = process.e
   return createHmac("sha256", segredo).update(email.trim().toLowerCase(), "utf8").digest("hex");
 }
 
-export function motivoDoErroAuth(erro: { code?: string; status?: number }): MotivoEntradaRecusada {
+export function motivoDaRecusa(erro: { code?: string; status?: number }): MotivoEntradaRecusada {
   if (erro.code === "invalid_credentials") return "credenciais_invalidas";
   if (erro.code === "captcha_failed") return "desafio_recusado";
   if (erro.status === 429) return "muitas_tentativas";
