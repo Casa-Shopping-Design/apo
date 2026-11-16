@@ -30,6 +30,7 @@ const email = "diretor@construtora.invalid";
 const chaveAssinatura = "chave-de-assinatura-do-teste-com-trinta-e-dois-ou-mais";
 
 const auth = {
+  credenciais: [] as Record<string, unknown>[],
   erroEntrada: null as { code?: string; status?: number } | null,
   perfil: "leitura" as string | null,
   aal: "aal1",
@@ -48,8 +49,10 @@ const agendados: (() => Promise<void>)[] = [];
 function clienteBanco() {
   return {
     auth: {
-      signInWithPassword: async () =>
-        auth.erroEntrada ? { data: { user: null }, error: auth.erroEntrada } : { data: { user: { id: idUsuario } }, error: null },
+      signInWithPassword: async (credenciais: Record<string, unknown>) => {
+        auth.credenciais.push(credenciais);
+        return auth.erroEntrada ? { data: { user: null }, error: auth.erroEntrada } : { data: { user: { id: idUsuario } }, error: null };
+      },
       getClaims: async () => ({
         data: { claims: { sub: idUsuario, aal: auth.aal, app_metadata: { perfil: auth.perfil ?? undefined } } },
       }),
@@ -66,10 +69,11 @@ function clienteBanco() {
   };
 }
 
-function formulario(email: string, senha: string): FormData {
+function formulario(email: string, senha: string, respostaDesafio?: string): FormData {
   const dados = new FormData();
   dados.set("email", email);
   dados.set("senha", senha);
+  if (respostaDesafio !== undefined) dados.set("cf-turnstile-response", respostaDesafio);
   return dados;
 }
 
@@ -88,12 +92,13 @@ async function rodarAgendados(): Promise<void> {
 }
 
 beforeEach(() => {
-  Object.assign(auth, { erroEntrada: null, perfil: "leitura", aal: "aal1" });
+  Object.assign(auth, { credenciais: [], erroEntrada: null, perfil: "leitura", aal: "aal1" });
   Object.assign(banco, { erroRegistro: null, chamadas: [] });
   roteador.destinos = [];
   agendados.splice(0);
   vi.stubEnv("AUDITORIA_CHAVE_HMAC", "segredo-de-teste-com-pelo-menos-trinta-e-dois-caracteres");
   vi.stubEnv("ASSISTENTE_CHAVE_ASSINATURA", chaveAssinatura);
+  vi.stubEnv("NEXT_PUBLIC_TURNSTILE_SITE_KEY", "");
 });
 
 // Refaz a assinatura do jeito que o banco confere, com os valores que foram para a chamada.
@@ -200,5 +205,51 @@ describe("entrar", () => {
     await rodarAgendados();
     const linha = banco.chamadas.find((chamada) => chamada.funcao === "registrar_requisicao_painel");
     expect(linha?.argumentos).toMatchObject({ p_rota: "/entrar:entrar", p_status_http: 400, p_classe_erro: "recusada" });
+  });
+});
+
+describe("entrar com o desafio contra robôs", () => {
+  // Chave de teste publicada pela Cloudflare, que sempre passa; a resposta é um texto qualquer no formato.
+  const chaveDesafio = "1x00000000000000000000AA";
+  const respostaDesafio = "XXXX.DUMMY.TOKEN.XXXX";
+
+  it("sem a chave pública nada muda: o Auth recebe só e-mail e senha, mesmo que o formulário traga uma resposta", async () => {
+    const { entrar } = await acoes();
+    await expect(entrar(estado, formulario(email, "x", respostaDesafio))).rejects.toThrow("REDIRECIONAMENTO");
+    expect(auth.credenciais).toEqual([{ email, password: "x" }]);
+  });
+
+  it("com a chave, a resposta do widget vai para o Auth como captchaToken", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TURNSTILE_SITE_KEY", chaveDesafio);
+    const { entrar } = await acoes();
+    await expect(entrar(estado, formulario(email, "x", respostaDesafio))).rejects.toThrow("REDIRECIONAMENTO");
+    expect(auth.credenciais).toEqual([{ email, password: "x", options: { captchaToken: respostaDesafio } }]);
+  });
+
+  it.each([
+    ["sem o campo", undefined],
+    ["vazia", ""],
+    ["fora do formato", "resposta com espaço"],
+  ])("com a chave e a resposta %s, pede para esperar e não chama o Auth nem a auditoria", async (_caso, resposta) => {
+    vi.stubEnv("NEXT_PUBLIC_TURNSTILE_SITE_KEY", chaveDesafio);
+    const { entrar } = await acoes();
+    expect(await entrar(estado, formulario(email, "x", resposta))).toEqual({ erro: mensagens.entrar.desafioPendente, email });
+    expect(auth.credenciais).toEqual([]);
+    expect(funcoesChamadas()).toEqual([]);
+  });
+
+  it("resposta que o Auth recusa vira mensagem própria e motivo curto na auditoria", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TURNSTILE_SITE_KEY", chaveDesafio);
+    auth.erroEntrada = { code: "captcha_failed", status: 400 };
+    const { entrar } = await acoes();
+    expect((await entrar(estado, formulario(email, "x", respostaDesafio))).erro).toBe(mensagens.entrar.desafioRecusado);
+    expect(banco.chamadas[0].argumentos?.p_motivo).toBe("desafio_recusado");
+  });
+
+  it("chave pública fora do formato conta como ausente", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TURNSTILE_SITE_KEY", "chave com espaço");
+    const { entrar } = await acoes();
+    await expect(entrar(estado, formulario(email, "x"))).rejects.toThrow("REDIRECIONAMENTO");
+    expect(auth.credenciais).toEqual([{ email, password: "x" }]);
   });
 });

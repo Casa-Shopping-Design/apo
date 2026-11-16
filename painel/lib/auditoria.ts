@@ -14,7 +14,7 @@ export type EventoSessao =
   | "segundo_fator_recusado";
 
 // Códigos curtos do login que falhou; o texto do Auth nunca vai para o banco.
-export type MotivoEntradaRecusada = "credenciais_invalidas" | "muitas_tentativas" | "indisponivel";
+export type MotivoEntradaRecusada = "credenciais_invalidas" | "muitas_tentativas" | "desafio_recusado" | "indisponivel";
 
 type ClienteServidor = Awaited<ReturnType<typeof criarClienteServidor>>;
 
@@ -28,6 +28,7 @@ export function hmacEmail(email: string, segredo: string | undefined = process.e
 
 export function motivoDoErroAuth(erro: { code?: string; status?: number }): MotivoEntradaRecusada {
   if (erro.code === "invalid_credentials") return "credenciais_invalidas";
+  if (erro.code === "captcha_failed") return "desafio_recusado";
   if (erro.status === 429) return "muitas_tentativas";
   return "indisponivel";
 }

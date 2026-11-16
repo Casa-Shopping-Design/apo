@@ -5,6 +5,8 @@ export const mensagens = {
     credenciaisInvalidas: "E-mail ou senha incorretos. Confira e tente de novo.",
     muitasTentativas: "Muitas tentativas seguidas. Espere alguns minutos e tente de novo.",
     indisponivel: "Não foi possível entrar agora. Tente de novo em alguns minutos.",
+    desafioPendente: "A verificação contra robôs ainda não terminou. Espere a caixa abaixo da senha confirmar e clique em Entrar de novo.",
+    desafioRecusado: "A verificação contra robôs não passou. Recarregue a página e tente de novo; se continuar, tente em outro navegador.",
   },
   posicao: {
     indisponivel: "Não foi possível carregar as obras agora. Recarregue a página em alguns minutos.",

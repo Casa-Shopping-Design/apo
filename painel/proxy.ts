@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { origemDesafioAtiva } from "@/lib/desafio-entrada";
 import { caminhoManutencao, decidirManutencao, manutencaoLigada } from "@/lib/manutencao";
 import { mensagens } from "@/lib/mensagens";
 import { caminhosAcesso, decidirDestino } from "@/lib/supabase/nivel-acesso";
@@ -23,7 +24,7 @@ function cabecalhosPagina(request: NextRequest, idRequisicao: string, nonce: str
 export async function proxy(request: NextRequest) {
   const idRequisicao = crypto.randomUUID();
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
-  const politicaConteudo = montarPoliticaConteudo(nonce);
+  const politicaConteudo = montarPoliticaConteudo(nonce, origemDesafioAtiva());
   const caminho = request.nextUrl.pathname;
 
   // Antes da sessão: durante a manutenção o painel não chama o Auth nem o banco.
