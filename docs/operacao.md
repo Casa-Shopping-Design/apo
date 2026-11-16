@@ -22,15 +22,49 @@ A Vercel guarda log por 1 hora no plano Hobby e 1 dia no Pro. O que precisa dura
 
 Sem `SENTRY_DSN` e `NEXT_PUBLIC_SENTRY_DSN` o SDK fica desligado, que é o normal em desenvolvimento e no CI.
 
+### Como ligar o Sentry
+
+1. Em sentry.io, crie a conta no plano gratuito (Developer, 5 mil erros por mês) e um projeto da plataforma Next.js. O Sentry não tem região no Brasil; o filtro tira dado pessoal antes do envio, então qualquer uma serve.
+2. Copie o DSN em Settings, Projects, o projeto, Client Keys (DSN).
+3. Na Vercel, projeto `apo`, Settings, Environment Variables, crie `SENTRY_DSN` e `NEXT_PUBLIC_SENTRY_DSN` com o mesmo valor, no ambiente Production.
+4. Faça um Redeploy. A variável `NEXT_PUBLIC_` entra no código do navegador só no build.
+5. A CSP libera o host do DSN no `connect-src` sozinha (`painel/lib/politica-conteudo.ts`). Para conferir, abra o painel com o console do navegador aberto: não pode aparecer aviso de CSP com `sentry.io`.
+6. O projeto já nasce com a regra de alerta que manda e-mail no primeiro evento de cada erro novo. Confira em Alerts.
+
+## Endereço e domínio
+
+O painel atende em `https://demo.apotecs.com.br`. O `apotecs.com.br`, o `www`, o `apo-casadesign.vercel.app` e o `obra-analitica.vercel.app` redirecionam para ele com 307, mantendo caminho e parâmetros, então link antigo continua funcionando. Os deploys de preview e as URLs de deploy da Vercel pedem login de membro da equipe (Deployment Protection, modo padrão); só os domínios de produção ficam abertos. O domínio está no Registro.br, com o DNS nos servidores do próprio Registro.br, e os registros que apontam para a Vercel são os que a aba Domains do projeto `apo` mostra.
+
+Trocar o endereço mexe em quatro lugares: Domains na Vercel, Site URL e Redirect URLs do Auth no Supabase, segredo `PAINEL_URL_BASE` no GitHub e `PAINEL_URL_PUBLICA` na hora de cadastrar webhooks. Deixe o endereço antigo nas Redirect URLs até ninguém mais entrar por ele, senão convite e troca de senha caem numa página que recusa o retorno.
+
+Na Vercel ficam só as variáveis que o painel lê, todas em Production: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `ANTHROPIC_API_KEY` e, para o assistente executar consulta, `ASSISTENTE_CHAVE_ASSINATURA`. Credencial de banco e do ERP fica nos segredos do GitHub Actions, que é quem roda a carga; o painel nunca as lê.
+
+## Auth no Supabase
+
+No projeto da demo: cadastro aberto e login anônimo desligados, confirmação de e-mail ligada, segundo fator por aplicativo ligado, gancho `app.claims_jwt` ativo para os claims do JWT. Senha com no mínimo 12 caracteres, troca de senha só com login recente e com a senha atual. Login por link mágico e por código no e-mail desligado, porque o painel só entra com senha. Senha vazada, duração de sessão e tempo de inatividade só existem no plano Pro. O corte de sessão sem segundo fator em 15 minutos (MFA, "Limitar a duração das sessões AAL1") fica desligado: o painel só pede o segundo fator a diretor e financeiro, e o corte derrubaria o usuário de leitura que cadastrou autenticador. O `supabase/config.toml` vale só para o banco local; cada um desses itens precisa ser repetido à mão num projeto novo.
+
+## Firewall da Vercel
+
+O projeto `apo` tem uma regra, "Limite de login e assistente": `POST` em `/entrar`, `/seguranca/segundo-fator/cadastrar`, `/seguranca/segundo-fator/verificar` e `/api/assistente`, no máximo 10 por minuto por IP, com resposta 429 depois disso. O plano Hobby aceita uma regra de limite só, então as quatro rotas dividem a mesma contagem: dez perguntas ao assistente num minuto também travam o login daquele IP até o minuto virar. A cota por usuário do assistente no banco continua valendo por baixo. `/api/saude` e `/api/origem/*` ficam sem limite na borda, para o monitor e o ERP não serem barrados.
+
+Quem bater no limite espera um minuto. Para conferir a regra sem tentar login de verdade, mande 11 `POST` vazios para `/entrar`: o 11º volta 429. Mudança de regra vale na hora, sem novo deploy, e fica em Firewall, Audit Log.
+
 ## Rota de saúde
 
-`GET /api/saude` responde `{ ok, idade_horas }`, sem login; com o segredo `MONITOR_TOKEN` no cabeçalho `x-monitor-token` acrescenta `commit`, `ultima_carga_em` e `situacao_carga`. A data vem de `public.ultima_carga()`, a única função que o anônimo chama fora do webhook. Responde 503 quando o banco não responde ou quando algum tenant ativo está há mais de 26 horas sem carga concluída. O UptimeRobot chama a cada 5 minutos e manda e-mail na falha.
+`GET /api/saude` responde `{ ok, idade_horas }`, sem login; com o segredo `MONITOR_TOKEN` no cabeçalho `x-monitor-token` acrescenta `commit`, `ultima_carga_em` e `situacao_carga`. A data vem de `public.ultima_carga()`, a única função que o anônimo chama fora do webhook. Responde 503 quando o banco não responde ou quando algum tenant ativo está há mais de 17 dias e 2 horas sem carga concluída, o maior intervalo da carga quinzenal. O monitor externo chama a cada 5 minutos e manda e-mail na falha.
 
-Com 503, olhe `idade_horas`: nulo com `ultima_carga_em` nulo quer dizer banco fora do ar ou nenhuma carga concluída; número acima de 26 quer dizer que a carga noturna não rodou ou falhou.
+Com 503, olhe `idade_horas`: nulo com `ultima_carga_em` nulo quer dizer banco fora do ar ou nenhuma carga concluída; número acima de 410 (17 dias e 2 horas) quer dizer que a carga quinzenal não rodou ou falhou.
+
+### Como ligar o monitor externo
+
+1. Em uptimerobot.com, crie a conta no plano gratuito. O e-mail da conta é o que recebe os alertas.
+2. Add New Monitor, tipo HTTP(s), endereço `https://demo.apotecs.com.br/api/saude`, intervalo de 5 minutos.
+3. O monitor não precisa do `MONITOR_TOKEN`: o 503 já sai sem ele. O token só acrescenta commit e situação da carga na resposta, e serve para quem conferir à mão.
+4. Para conferir, use o botão de teste do monitor. Ele deve ver 200. O modo de manutenção não derruba a rota de saúde, então o alerta só vem com banco fora do ar ou carga parada por mais de 17 dias.
 
 ## Carga noturna
 
-O job `.github/workflows/carga_noturna.yml` roda às 02:17 de Brasília. Cada endpoint e a recarga do staging gravam uma linha em `app.carga_execucao` com início, fim, registros lidos, registros novos, situação e duração. A data "Dados carregados em" das telas sai só da etapa `staging` concluída com `ok`.
+O job `.github/workflows/carga_noturna.yml` roda às 02:17 de Brasília nos dias 1 e 15 de cada mês, e à mão quando alguém dispara. Carga diária ficou de fora por decisão do João em 04/11. O nome do workflow ficou "Carga noturna" porque a issue de falha e o histórico do Actions usam esse nome. Cada endpoint e a recarga do staging gravam uma linha em `app.carga_execucao` com início, fim, registros lidos, registros novos, situação e duração. A data "Dados carregados em" das telas sai só da etapa `staging` concluída com `ok`.
 
 A carga real (`scripts/carregar_origem.py`) grava no mesmo formato: uma linha por tarefa do plano, uma por grupo da fila do webhook (`fila:income`, `fila:units`) e uma `staging`. Tarefa que falha fecha a própria linha como `falha` e a carga segue para a próxima; só o staging deixa de rodar quando nenhuma tarefa concluiu. As recargas do staging tomam uma trava por cliente no banco, então uma carga manual rodando junto com a noturna do mesmo cliente espera a outra terminar em vez de misturar as tabelas.
 
@@ -45,7 +79,7 @@ limit 20;
 
 ### Quando a carga falha
 
-1. O GitHub manda e-mail de falha para quem editou por último a linha do `cron` no workflow. Confira em Settings, Notifications, Actions, que o e-mail está ligado.
+1. O workflow `aviso_falha.yml` abre a issue "Falha na rotina: Carga noturna" com o link da execução, e o GitHub manda e-mail para quem acompanha o repositório (botão Watch, com Issues marcado). Nova falha entra como comentário na mesma issue, e ela fecha sozinha quando a carga volta a passar. O mesmo vale para a Carga controlada e para o Resumo semanal.
 2. Abra a execução em Actions, Carga noturna, e leia o passo "Carga". O script para no primeiro endpoint com erro e não recarrega o staging, então as telas continuam mostrando a carga anterior, com a data dela.
 3. Em `app.carga_execucao`, a linha com `situacao = 'falha'` diz o endpoint e o `erro_resumo` (classe do erro e código SQLSTATE, sem valores de registro).
 4. Linha parada em `executando` há mais de 30 minutos quer dizer que o job foi interrompido no meio (tempo limite ou cancelamento). Não precisa limpar: a próxima execução abre linhas novas.
@@ -64,7 +98,7 @@ gh run watch
 
 ### Agendamento que para sozinho
 
-A documentação do GitHub diz que, em repositório público, o agendamento é desativado depois de 60 dias sem atividade no repositório. Para repositório privado a documentação não cita a regra. Por isso, uma vez por mês, confira em Actions que a Carga noturna rodou nos últimos dias; se o workflow aparecer desativado, reative no botão "Enable workflow". A rota de saúde também acusa: com a carga parada, ela vira 503 depois de 26 horas.
+A documentação do GitHub diz que, em repositório público, o agendamento é desativado depois de 60 dias sem atividade no repositório. Para repositório privado a documentação não cita a regra. Por isso, uma vez por mês, confira em Actions que a Carga noturna rodou no dia 1 ou 15 mais recente; se o workflow aparecer desativado, reative no botão "Enable workflow". A rota de saúde também acusa: com a carga parada, ela vira 503 depois de 17 dias e 2 horas.
 
 ## Carga controlada por pedido (clientes reais)
 
@@ -103,15 +137,15 @@ Antes de apagar, desligue o agendamento da carga desse cliente e guarde o que o 
 
 | Onde | Nome | Para quê |
 | --- | --- | --- |
-| GitHub, secrets do repositório | `DATABASE_URL` | Session pooler do projeto da demo, com a senha codificada |
-| GitHub, secrets do repositório | `TENANT_DEMO_ID` | Tenant que a carga grava |
+| GitHub, Environment `demo` | `DATABASE_URL` | Session pooler do projeto da demo, com a senha codificada |
+| GitHub, Environment `demo` | `TENANT_DEMO_ID` | Tenant que a carga grava |
 | GitHub, secrets do repositório | `RESEND_API_KEY` | Chave do Resend com permissão só de envio, usada pelo resumo semanal |
 | GitHub, secrets do repositório | `RESUMO_REMETENTE` | Remetente do resumo, no domínio verificado no Resend |
 | GitHub, secrets do repositório | `PAINEL_URL_BASE` | Endereço do painel em produção, com https, para o link do e-mail |
 | Vercel | `SENTRY_DSN` | Sentry no servidor |
 | Vercel | `NEXT_PUBLIC_SENTRY_DSN` | Sentry no navegador; o DSN só permite enviar eventos |
 
-Quando existir o banco do piloto, ele ganha secrets próprios, num environment do GitHub separado. O secret da demo nunca aponta para o piloto.
+Nenhuma `DATABASE_URL` fica nos secrets do repositório. Secret de Environment tem precedência sobre o do repositório, e o do repositório vira valor de reserva quando o Environment não tem o seu. Com a URL da demo no repositório, um Environment de cliente criado sem `DATABASE_URL` (o GitHub cria o Environment sozinho na primeira execução que o cita) mandaria a carga real para o banco da demo. Sem nenhuma no repositório, o job falha na conexão e nada é gravado. O banco de produção tem os Environments `controlador` e `cliente-<conta_origem>`, cada um com a própria `DATABASE_URL`. O da demo nunca aponta para produção.
 
 O CI (`.github/workflows/ci.yml`) não usa secret nenhum: sobe um Supabase local, cria dois usuários de teste com senha sorteada e apaga tudo no fim.
 
@@ -125,7 +159,7 @@ O script conecta com a `DATABASE_URL` do servidor, que não passa pelo RLS. Os n
 
 1. Crie a conta no Resend (o plano gratuito manda 100 e-mails por dia) e cadastre o domínio do remetente em Domains. O Resend mostra os registros DNS (SPF, DKIM e, de preferência, DMARC); publique no DNS do domínio e espere a verificação.
 2. Em API Keys, crie uma chave com permissão "Sending access", restrita ao domínio.
-3. No GitHub, Settings, Secrets and variables, Actions, cadastre `RESEND_API_KEY`, `RESUMO_REMETENTE` (por exemplo `APO <resumo@seudominio.com.br>`) e `PAINEL_URL_BASE`. A `DATABASE_URL` é a mesma da carga noturna.
+3. No GitHub, Settings, Secrets and variables, Actions, cadastre `RESEND_API_KEY`, `RESUMO_REMETENTE` (por exemplo `APO <resumo@seudominio.com.br>`) e `PAINEL_URL_BASE`. A `DATABASE_URL` é a mesma da carga noturna, no Environment `demo`.
 4. Rode uma vez à mão em Actions, Resumo semanal, Run workflow, e confira a caixa de entrada de um diretor e de um gerente.
 
 O log do job é uma linha JSON com contagens (destinatários, obras, alertas, enviados, falhas e o status HTTP das falhas). Não tem e-mail, nome de obra nem chave. Se o job rodar de novo no mesmo dia, o Resend descarta a repetição pela chave de idempotência, que vale 24 horas.

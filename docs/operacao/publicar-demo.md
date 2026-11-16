@@ -101,7 +101,7 @@ A pessoa sai e entra de novo para o token trazer o perfil.
 
 ## 7. GitHub
 
-Settings, Secrets and variables, Actions: `DATABASE_URL` (a mesma do `.env`) e `TENANT_DEMO_ID`. Em Actions, rode a Carga noturna uma vez pelo "Run workflow" e confira que terminou verde.
+Settings, Environments, Environment `demo`: secrets `DATABASE_URL` (a mesma do `.env`) e `TENANT_DEMO_ID`. Nunca nos secrets do repositório (ver Secrets e variáveis em `docs/operacao.md`). Em Actions, rode a Carga noturna uma vez pelo "Run workflow" e confira que terminou verde.
 
 ## 8. Conferência
 

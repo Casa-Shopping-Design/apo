@@ -118,3 +118,53 @@ export function montarGrade(unidades: UnidadeMapa[]): GradeUnidades {
 
   return { blocos, foraDoPadrao, totais };
 }
+
+// Situações escolhidas no filtro do mapa, lidas de ?situacao=reservada&situacao=proposta. Valor desconhecido é
+// ignorado, e lista vazia quer dizer todas. A ordem segue a da legenda, para o endereço não depender do clique.
+export function lerFiltroSituacao(valor: string | string[] | undefined): SituacaoUnidade[] {
+  const pedidas = new Set(typeof valor === "string" ? [valor] : (valor ?? []));
+  return situacoesUnidade.filter((situacao) => pedidas.has(situacao));
+}
+
+// Endereço do mapa com a situação ligada ou desligada no filtro.
+export function enderecoFiltroSituacao(base: string, filtro: SituacaoUnidade[], alternar: SituacaoUnidade): string {
+  const novo = filtro.includes(alternar) ? filtro.filter((situacao) => situacao !== alternar) : [...filtro, alternar];
+  const parametros = new URLSearchParams();
+  for (const situacao of situacoesUnidade) if (novo.includes(situacao)) parametros.append("situacao", situacao);
+  const consulta = parametros.toString();
+  return consulta ? `${base}?${consulta}` : base;
+}
+
+// A unidade fora do filtro deixa a célula vazia, para as colunas de posição não mudarem de lugar; andar e
+// tipologia sem nenhuma unidade escolhida saem. "sem_unidade" é a posição que não existe naquele andar.
+export type CelulaFiltrada = UnidadeMapa | "fora_do_filtro" | "sem_unidade";
+
+export type GradeFiltrada = {
+  blocos: { tipologia: string; posicoes: number[]; andares: { andar: number; celulas: CelulaFiltrada[] }[] }[];
+  foraDoPadrao: UnidadeMapa[];
+  exibidas: number;
+};
+
+// O(u): uma passada pelas células da grade já montada.
+export function filtrarGrade(grade: GradeUnidades, filtro: SituacaoUnidade[]): GradeFiltrada {
+  const escolhida = (unidade: UnidadeMapa) => filtro.length === 0 || filtro.includes(unidade.situacao);
+  let exibidas = 0;
+  const blocos = grade.blocos
+    .map((bloco) => ({
+      ...bloco,
+      andares: bloco.andares
+        .map((linha) => ({
+          andar: linha.andar,
+          celulas: linha.celulas.map((celula): CelulaFiltrada => {
+            if (!celula) return "sem_unidade";
+            if (!escolhida(celula)) return "fora_do_filtro";
+            exibidas += 1;
+            return celula;
+          }),
+        }))
+        .filter((linha) => linha.celulas.some((celula) => typeof celula === "object")),
+    }))
+    .filter((bloco) => bloco.andares.length > 0);
+  const foraDoPadrao = grade.foraDoPadrao.filter(escolhida);
+  return { blocos, foraDoPadrao, exibidas: exibidas + foraDoPadrao.length };
+}

@@ -13982,7 +13982,7 @@ Retorna uma única configuração que estiver ativa
 | `especifico_cv.analytics` | string |  | Ex.: `UA-35126492-2` |
 | `especifico_cv.exibir_multiplos_portais` | boolean |  | Ex.: `True` |
 | `especifico_cv.sessao_documentos` | string |  | Ex.: `Arquivos especiais` |
-| `especifico_cv.urlGoogleApiMaps` | string |  | Ex.: `https://maps.googleapis.com/maps/api/js?key=AIzaSyCC0vNnyPQP` |
+| `especifico_cv.urlGoogleApiMaps` | string |  | Ex.: `https://maps.googleapis.com/maps/api/js?key=<chave-do-google-maps-do-exemplo>` |
 | `assistencias` | object |  |  |
 | `assistencias.exibir_localidade` | boolean |  | Ex.: `True` |
 | `assistencias.exibir_area_comum` | boolean |  | Ex.: `True` |
@@ -23520,7 +23520,7 @@ retorno é limitado a 10 pessoas, ordenadas por nome.
 | `empreendimentos` | array |  |  |
 | `empreendimentos[].idempreendimento` | integer |  | Ex.: `1133` |
 | `empreendimentos[].nome` | string |  | Ex.: `(SPE) JR AVENIDA SÃO P'AULO` |
-| `api_key` | string |  | Ex.: `AIzaSyDME2fK0ZlXhBJe3Rvlhh8FMZqip5_lbNM` |
+| `api_key` | string |  | Ex.: `<chave-web-do-firebase-do-exemplo>` |
 | `auth_domain` | string |  | Ex.: `brilliant-torch-2629.firebaseapp.com` |
 | `project_id` | string |  | Ex.: `brilliant-torch-2629` |
 | `storage_bucket` | string |  | Ex.: `brilliant-torch-2629.firebasestorage.app` |
