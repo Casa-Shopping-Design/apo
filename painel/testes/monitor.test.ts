@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  enderecoDetalhe,
   enderecoMonitor,
   faixaDeStatus,
   formatarMilissegundos,
   hojeSaoPaulo,
   lerFiltroMonitor,
+  lerIdRequisicaoMonitor,
   lerRequisicao,
   lerResumo,
+  montarDetalhe,
   montarPagina,
+  rotuloSistema,
+  sistemas,
   somarDias,
   type Requisicao,
 } from "../lib/monitor";
@@ -30,6 +35,8 @@ function requisicao(id: number, registradoEm: string): Requisicao {
     classeErro: null,
     pedidoId: null,
     registradoEm,
+    ip: null,
+    idRequisicao: null,
   };
 }
 
@@ -71,6 +78,13 @@ describe("lerFiltroMonitor", () => {
     const filtro = lerFiltroMonitor({ de: "2026-01-01", ate: hoje }, hoje);
     expect(filtro).toMatchObject({ de: somarDias(hoje, -89), ate: hoje, periodoAjustado: true });
     expect(lerFiltroMonitor({ de: somarDias(hoje, -89), ate: hoje }, hoje).periodoAjustado).toBe(false);
+  });
+
+  it("o prazo de guarda do banco limita o período, sem passar do teto de 90 dias", () => {
+    expect(lerFiltroMonitor({ de: "2026-10-01", ate: hoje }, hoje, 7)).toMatchObject({ de: "2026-10-24", ate: hoje, periodoAjustado: true });
+    expect(lerFiltroMonitor({}, hoje, 3)).toMatchObject({ de: "2026-10-28", ate: hoje, periodoAjustado: false });
+    expect(lerFiltroMonitor({ de: "2026-01-01", ate: hoje }, hoje, 365).de).toBe(somarDias(hoje, -89));
+    expect(lerFiltroMonitor({ de: "2026-01-01", ate: hoje }, hoje, 0).de).toBe(somarDias(hoje, -89));
   });
 
   it("a chave de paginação só entra com os dois campos válidos", () => {
@@ -133,7 +147,11 @@ describe("leitura das linhas e faixa de status", () => {
   it("lê a linha e o resumo do banco com os nulos no lugar", () => {
     expect(
       lerRequisicao({ id: "3", tenant_id: null, direcao: "entrada", sistema: "painel_api", metodo: "POST", rota: "/api/assistente", status_http: null, duracao_ms: "15", tamanho_bytes: null, tentativa: "1", classe_erro: "", pedido_id: null, registrado_em: "2026-10-30T12:00:00+00:00" }),
-    ).toMatchObject({ id: 3, tenantId: null, statusHttp: null, duracaoMs: 15, tentativa: 1, classeErro: null, pedidoId: null });
+    ).toMatchObject({ id: 3, tenantId: null, statusHttp: null, duracaoMs: 15, tentativa: 1, classeErro: null, pedidoId: null, ip: null, idRequisicao: null });
+    expect(
+      lerRequisicao({ id: 4, ip: "203.0.113.5", id_requisicao: "0b7f6f0e-5a8e-4a57-9d43-0c1f8e2b7a10", registrado_em: "2026-10-30T12:00:00+00:00" }),
+    ).toMatchObject({ ip: "203.0.113.5", idRequisicao: "0b7f6f0e-5a8e-4a57-9d43-0c1f8e2b7a10" });
+    expect(lerRequisicao({ id: 5, ip: "", id_requisicao: "abc" })).toMatchObject({ ip: null, idRequisicao: null });
     expect(lerResumo({ total: "7", sucesso: "5", erro_cliente: "1", erro_servidor: "1", sem_resposta: "0", mediana_ms: "510", p95_ms: null })).toEqual({
       total: 7,
       sucesso: 5,
@@ -151,5 +169,38 @@ describe("leitura das linhas e faixa de status", () => {
     expect(formatarMilissegundos(null)).toBe("sem tempo");
     expect(hojeSaoPaulo(new Date("2026-10-31T01:30:00Z"))).toBe("2026-10-30");
     expect(somarDias("2026-03-01", -1)).toBe("2026-02-28");
+  });
+});
+
+describe("sistemas do filtro", () => {
+  it("incluem página e ação do painel, com rótulo em português", () => {
+    expect(sistemas).toContain("painel_pagina");
+    expect(sistemas).toContain("painel_acao");
+    expect(rotuloSistema("painel_pagina")).toBe("Página do painel");
+    expect(rotuloSistema("painel_acao")).toBe("Ação do painel");
+  });
+});
+
+describe("detalhe da requisição", () => {
+  const entrada = { id: 20, principal: true, direcao: "entrada", sistema: "painel_api", metodo: "POST", rota: "/api/assistente", ip: "203.0.113.5", registrado_em: "2026-10-30T12:00:00+00:00" };
+  const saida = { id: 21, principal: false, direcao: "saida", sistema: "anthropic", metodo: "POST", rota: "/v1/messages", ip: null, registrado_em: "2026-10-30T12:00:01+00:00" };
+
+  it("separa a linha pedida das que nasceram da mesma requisição", () => {
+    const detalhe = montarDetalhe([entrada, saida]);
+    expect(detalhe?.principal).toMatchObject({ id: 20, ip: "203.0.113.5" });
+    expect(detalhe?.relacionadas.map((linha) => linha.id)).toEqual([21]);
+  });
+
+  it("sem a linha pedida não há detalhe: fora do RLS e inexistente dão no mesmo", () => {
+    expect(montarDetalhe([])).toBeNull();
+    expect(montarDetalhe([saida])).toBeNull();
+  });
+
+  it("o id da URL só vale como inteiro positivo", () => {
+    expect(lerIdRequisicaoMonitor("42")).toBe(42);
+    expect(enderecoDetalhe(42)).toBe("/monitor/42");
+    for (const invalido of [undefined, "", "0", "-1", "1.5", "1e3", "abc", "1 or 1=1", "9".repeat(17)]) {
+      expect(lerIdRequisicaoMonitor(invalido)).toBeNull();
+    }
   });
 });

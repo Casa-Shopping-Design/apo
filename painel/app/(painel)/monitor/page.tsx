@@ -3,6 +3,7 @@ import { AvisoTelaEmpresa } from "@/componentes/CabecalhoEmpresa";
 import { FiltroMonitor } from "@/componentes/FiltroMonitor";
 import { TabelaRequisicoes } from "@/componentes/TabelaRequisicoes";
 import { perfilVeMonitor, type ClienteCarga } from "@/lib/carga-pedido";
+import { lerPrazoRetencao } from "@/lib/consultas/auditoria";
 import { lerAcessoCarga, listarClientesOperador } from "@/lib/consultas/carga-pedido";
 import { listarRequisicoes, resumirRequisicoes } from "@/lib/consultas/monitor";
 import { mensagens } from "@/lib/mensagens";
@@ -42,13 +43,18 @@ function Totais({ resumo }: { resumo: ResumoRequisicoes }) {
   );
 }
 
+function textoPrazo(dias: number | null): string {
+  if (dias === null) return "guardados pelo prazo de retenção";
+  return dias === 1 ? "guardados por 1 dia" : `guardados por ${dias} dias`;
+}
+
 // Só diretor e operador. Totais e lista em paralelo, as duas em funções do banco que rodam com o papel do
 // usuário: o diretor vê o próprio tenant pelo RLS e o operador filtra por cliente.
 export default async function PaginaMonitor({ searchParams }: PageProps<"/monitor">) {
-  const acesso = await lerAcessoCarga();
+  const [acesso, prazo] = await Promise.all([lerAcessoCarga(), lerPrazoRetencao("requisicao")]);
   if (!perfilVeMonitor(acesso.perfil)) return <AvisoTelaEmpresa tela={tela} mensagem={mensagens.monitor.restrita} />;
 
-  const filtro = lerFiltroMonitor(await searchParams, hojeSaoPaulo(new Date()));
+  const filtro = lerFiltroMonitor(await searchParams, hojeSaoPaulo(new Date()), prazo);
   const cliente = acesso.operador ? filtro.cliente : null;
 
   const [clientes, resumo, pagina] = await Promise.all([
@@ -63,8 +69,8 @@ export default async function PaginaMonitor({ searchParams }: PageProps<"/monito
       <header className="flex flex-col gap-2">
         <h1 className="font-serif text-[28px] font-semibold">{tela}</h1>
         <p className="max-w-3xl text-suave">
-          Cada chamada que o painel faz ou recebe deixa uma linha: ERP, CRM, avisos de webhook, assistente e API do
-          painel. Só metadados, sem corpo, token nem dado pessoal, guardados por 90 dias.
+          Cada chamada que o painel faz ou recebe deixa uma linha: ERP, CRM, avisos de webhook, assistente, páginas e
+          ações do painel. Só metadados e o IP de quem acessou, sem corpo nem token, {textoPrazo(prazo)}.
         </p>
       </header>
 

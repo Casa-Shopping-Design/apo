@@ -58,9 +58,9 @@ Para o token vencer mais rápido, baixar `jwt_expiry` para 900 segundos no `conf
 
 Tamanho mínimo de senha, composição e captcha são configuração do Dashboard (Authentication, Providers, Email e Authentication, Attack Protection), não do código. Valores recomendados:
 
-- Tamanho mínimo: 12 caracteres (`minimum_password_length = 12` no `config.toml`, hoje 6).
+- Tamanho mínimo: 12 caracteres (`minimum_password_length = 12` no `config.toml`, que vale só para o banco local).
 - Composição: letras e dígitos (`password_requirements = "letters_digits"`).
 - Senha vazada: ligar a verificação contra o HaveIBeenPwned quando o plano permitir.
-- Captcha: Cloudflare Turnstile depois da demo; exige carregar o script com o nonce da CSP e passar `captchaToken` na Server Action de entrar, o que é um pacote à parte.
+- Captcha: Cloudflare Turnstile. O código já está pronto e fica desligado até existir `NEXT_PUBLIC_TURNSTILE_SITE_KEY`; o passo a passo para ligar está em `docs/operacao/protecao-login.md`.
 
 Os valores do Dashboard remoto não foram verificados neste pacote; conferir antes do piloto.

@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { origemDesafioAtiva } from "@/lib/desafio-entrada";
 import { caminhoManutencao, decidirManutencao, manutencaoLigada } from "@/lib/manutencao";
 import { mensagens } from "@/lib/mensagens";
 import { caminhosAcesso, decidirDestino } from "@/lib/supabase/nivel-acesso";
@@ -8,11 +9,13 @@ import { montarPoliticaConteudo } from "@/lib/politica-conteudo";
 // Tempo sugerido ao navegador e ao monitor antes de tentar de novo durante a manutenção, em segundos.
 const novaTentativaManutencao = "300";
 
-// A página lê o nonce da CSP e o id da requisição destes cabeçalhos.
+// A página lê o nonce da CSP e o id da requisição destes cabeçalhos. O caminho vai em x-caminho porque o layout
+// não enxerga a URL e precisa dele para registrar a entrada no monitor; o proxy sobrescreve o que vier de fora.
 function cabecalhosPagina(request: NextRequest, idRequisicao: string, nonce: string, politicaConteudo: string): Headers {
   const cabecalhos = new Headers(request.headers);
   cabecalhos.set("x-id-requisicao", idRequisicao);
   cabecalhos.set("x-nonce", nonce);
+  cabecalhos.set("x-caminho", request.nextUrl.pathname);
   cabecalhos.set("content-security-policy", politicaConteudo);
   return cabecalhos;
 }
@@ -21,7 +24,7 @@ function cabecalhosPagina(request: NextRequest, idRequisicao: string, nonce: str
 export async function proxy(request: NextRequest) {
   const idRequisicao = crypto.randomUUID();
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
-  const politicaConteudo = montarPoliticaConteudo(nonce);
+  const politicaConteudo = montarPoliticaConteudo(nonce, origemDesafioAtiva());
   const caminho = request.nextUrl.pathname;
 
   // Antes da sessão: durante a manutenção o painel não chama o Auth nem o banco.

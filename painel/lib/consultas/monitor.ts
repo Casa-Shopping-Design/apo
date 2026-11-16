@@ -4,7 +4,9 @@ import {
   lerRequisicao,
   lerResumo,
   linhasPorPagina,
+  montarDetalhe,
   montarPagina,
+  type DetalheRequisicao,
   type FiltroMonitor,
   type PaginaRequisicoes,
   type ResumoRequisicoes,
@@ -45,4 +47,13 @@ export async function listarRequisicoes(filtro: FiltroMonitor, cliente: string |
   });
   if (error) throw new ErroConsulta(error.code);
   return montarPagina(((data ?? []) as Record<string, unknown>[]).map(lerRequisicao), linhasPorPagina);
+}
+
+// A linha e as que nasceram da mesma requisição do painel. Fora do que o RLS deixa ler volta nulo, igual a
+// linha que não existe ou que já saiu pela retenção.
+export async function detalharRequisicao(id: number): Promise<DetalheRequisicao | null> {
+  const supabase = await criarClienteServidor();
+  const { data, error } = await supabase.schema("app").rpc("detalhar_requisicao", { p_id: id });
+  if (error) throw new ErroConsulta(error.code);
+  return montarDetalhe((data ?? []) as Record<string, unknown>[]);
 }

@@ -50,17 +50,17 @@ select ok(
     and not has_table_privilege('anon', 'app.acesso_suporte', 'select'),
   'authenticated só lê acesso_suporte; anon nada');
 select ok(
-  not has_function_privilege('authenticated', 'app.registrar_evento(uuid, text, uuid, jsonb)', 'execute')
+  not has_function_privilege('authenticated', 'app.registrar_evento(uuid, text, uuid, jsonb, inet)', 'execute')
     and not has_function_privilege('authenticated', 'app.vinculos_vivos(uuid)', 'execute')
     and has_function_privilege('authenticated', 'app.pedir_acesso_suporte(uuid, text, integer)', 'execute')
     and has_function_privilege('authenticated', 'app.responder_acesso_suporte(bigint, boolean)', 'execute')
     and has_function_privilege('authenticated', 'app.encerrar_acesso_suporte(bigint)', 'execute')
-    and has_function_privilege('authenticated', 'app.registrar_entrada()', 'execute')
+    and has_function_privilege('authenticated', 'app.registrar_entrada(inet)', 'execute')
     and not has_function_privilege('anon', 'app.pedir_acesso_suporte(uuid, text, integer)', 'execute'),
   'escrita na auditoria só pela função interna; as funções de suporte são do usuário logado');
 select ok(
   (select bool_and(prosecdef and proconfig @> array['search_path=""']) from pg_proc
-   where oid in ('app.registrar_evento(uuid, text, uuid, jsonb)'::regprocedure, 'app.registrar_entrada()'::regprocedure,
+   where oid in ('app.registrar_evento(uuid, text, uuid, jsonb, inet)'::regprocedure, 'app.registrar_entrada(inet)'::regprocedure,
                  'app.pedir_acesso_suporte(uuid, text, integer)'::regprocedure,
                  'app.responder_acesso_suporte(bigint, boolean)'::regprocedure,
                  'app.encerrar_acesso_suporte(bigint)'::regprocedure, 'app.papel_operador()'::regprocedure,

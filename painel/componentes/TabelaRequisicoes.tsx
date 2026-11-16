@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { enderecoCarga } from "@/lib/carga-pedido";
 import {
+  enderecoDetalhe,
   enderecoMonitor,
   faixaDeStatus,
   formatarInstante,
@@ -39,7 +40,7 @@ export function TabelaRequisicoes({
   return (
     <div className="flex flex-col gap-3">
       <div className="overflow-x-auto quadro">
-        <table className="w-full min-w-[960px] border-collapse text-sm">
+        <table className="w-full min-w-[1080px] border-collapse text-sm">
           <caption className="sr-only">Requisições registradas, da mais recente para a mais antiga.</caption>
           <thead>
             <tr className="text-suave">
@@ -73,6 +74,9 @@ export function TabelaRequisicoes({
                 Erro
               </th>
               <th scope="col" className={`${celula} border-b border-borda text-left font-medium`}>
+                IP
+              </th>
+              <th scope="col" className={`${celula} border-b border-borda text-left font-medium`}>
                 Pedido
               </th>
             </tr>
@@ -80,7 +84,11 @@ export function TabelaRequisicoes({
           <tbody>
             {pagina.linhas.map((linha) => (
               <tr key={linha.id} className="border-b border-borda last:border-b-0">
-                <td className={`${celula} whitespace-nowrap`}>{formatarInstante(linha.registradoEm)}</td>
+                <td className={`${celula} whitespace-nowrap`}>
+                  <Link href={enderecoDetalhe(linha.id)} className={classeLink} aria-label={`Detalhe da requisição de ${formatarInstante(linha.registradoEm)}`}>
+                    {formatarInstante(linha.registradoEm)}
+                  </Link>
+                </td>
                 {operador && (
                   <td className={celula}>{linha.tenantId ? (nomesCliente.get(linha.tenantId) ?? "cliente") : "sem cliente"}</td>
                 )}
@@ -95,6 +103,7 @@ export function TabelaRequisicoes({
                 <td className={`${celula} text-right whitespace-nowrap tabular-nums`}>{formatarMilissegundos(linha.duracaoMs)}</td>
                 <td className={`${celula} text-right tabular-nums`}>{linha.tentativa}</td>
                 <td className={`${celula} ${linha.classeErro ? "text-alerta" : ""}`}>{linha.classeErro ?? ""}</td>
+                <td className={`${celula} font-mono text-xs whitespace-nowrap`}>{linha.ip ?? ""}</td>
                 <td className={celula}>
                   {linha.pedidoId !== null && (
                     <Link href={enderecoCarga(operador ? linha.tenantId : null, linha.pedidoId)} className={classeLink}>

@@ -100,18 +100,30 @@ class TesteBancoLocal(unittest.TestCase):
         self.assertNotIn(pedido_ruim, admitidos)
         self.assertEqual(self.situacao(pedido_bom)[0], "reservado")
         self.assertEqual(self.situacao(pedido_ruim), ("falha", "tenant sem conta_origem válida; cadastre pelo cadastrar_cliente.py"))
-        self.assertEqual(resultado["requisicoes_apagadas"], 0)
+        self.assertEqual((resultado["requisicoes_apagadas"], resultado["auditoria_apagada"]), (0, 0))
         self.assertTrue(controlar_cargas.encerrar_pedido(self.conexao, pedido_bom, "job falhou"))
         self.assertEqual(self.situacao(pedido_bom), ("falha", "job falhou"))
         self.assertFalse(controlar_cargas.encerrar_pedido(self.conexao, pedido_bom, "de novo"))
 
-    def test_limpeza_em_lotes(self):
+    def test_limpeza_em_lotes_pelo_prazo_do_banco(self):
         tenant = self.criar_tenant(f"ret-{uuid.uuid4().hex[:6]}")
+        prazo = self.conexao.execute("select dias from app.retencao_registro where tipo = 'requisicao'").fetchone()[0]
         self.conexao.execute(
             "insert into app.requisicao_registro (tenant_id, direcao, sistema, metodo, rota, registrado_em) "
-            "select %s, 'saida', 'erp', 'GET', '/velha', now() - interval '100 days' from generate_series(1, 5)", (tenant,))
-        self.assertEqual(controlar_cargas.limpar_retencao(self.conexao, dias=90, lote=2), 5)
-        self.assertEqual(controlar_cargas.limpar_retencao(self.conexao, dias=90, lote=2), 0)
+            "select %s, 'saida', 'erp', 'GET', '/velha', now() - make_interval(days => %s + 1) from generate_series(1, 5)",
+            (tenant, prazo))
+        self.conexao.execute(
+            "insert into app.evento_auditoria (tenant_id, evento, ator_papel, registrado_em) "
+            "select %s, 'entrada', 'sistema', now() - make_interval(days => %s + 1) from generate_series(1, 3)",
+            (tenant, prazo))
+        self.conexao.execute(
+            "insert into app.evento_auditoria (tenant_id, evento, ator_papel) values (%s, 'entrada', 'sistema')", (tenant,))
+        self.assertEqual(controlar_cargas.limpar_retencao(self.conexao, lote=2),
+                         {"requisicoes_apagadas": 5, "auditoria_apagada": 3})
+        self.assertEqual(controlar_cargas.limpar_retencao(self.conexao, lote=2),
+                         {"requisicoes_apagadas": 0, "auditoria_apagada": 0})
+        restante = self.conexao.execute("select count(*) from app.evento_auditoria where tenant_id = %s", (tenant,)).fetchone()[0]
+        self.assertEqual(restante, 1)
 
     def test_modo_local_roda_o_carregador_e_o_pedido_termina_concluido(self):
         tenant = self.criar_tenant(f"loc-{uuid.uuid4().hex[:6]}", indexador_correcao=1)

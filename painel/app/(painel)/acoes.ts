@@ -1,28 +1,26 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { idClienteValido } from "@/lib/cliente-ativo";
 import { registrar, type CamposLog } from "@/lib/log";
 import { mensagens } from "@/lib/mensagens";
+import { comRegistroAcao, lerContextoRequisicao, rotaAcao } from "@/lib/registro-requisicao";
 import { decidirDestino } from "@/lib/supabase/nivel-acesso";
 import { lerNivelSessao } from "@/lib/supabase/sessao";
 import { criarClienteServidor } from "@/lib/supabase/servidor";
 
 export type EstadoEscolhaCliente = { erro: string | null };
 
-const formatoUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-async function lerIdRequisicao(): Promise<string> {
-  const doProxy = (await headers()).get("x-id-requisicao");
-  return doProxy && formatoUuid.test(doProxy) ? doProxy : crypto.randomUUID();
+export async function escolherCliente(_estadoAnterior: EstadoEscolhaCliente, formulario: FormData): Promise<EstadoEscolhaCliente> {
+  return comRegistroAcao(rotaAcao("/", "escolherCliente"), () => executarEscolha(formulario));
 }
 
 // Troca o cliente ativo da sessão. app.escolher_tenant confere o vínculo vivo; o id do formulário nunca é
 // aceito sem essa conferência. Depois, refreshSession pede um JWT novo, que o hook já emite com o tenant
 // escolhido, e a navegação recomeça pela visão geral, porque as telas de obra são do tenant anterior.
-export async function escolherCliente(_estadoAnterior: EstadoEscolhaCliente, formulario: FormData): Promise<EstadoEscolhaCliente> {
-  const campos: CamposLog = { id_requisicao: await lerIdRequisicao(), rota: "cliente/escolher", resultado: "ok", user_id: null };
+async function executarEscolha(formulario: FormData): Promise<EstadoEscolhaCliente> {
+  const { idRequisicao } = await lerContextoRequisicao();
+  const campos: CamposLog = { id_requisicao: idRequisicao, rota: "cliente/escolher", resultado: "ok", user_id: null };
   const supabase = await criarClienteServidor();
   const { data: dadosUsuario } = await supabase.auth.getUser();
   if (!dadosUsuario.user) {

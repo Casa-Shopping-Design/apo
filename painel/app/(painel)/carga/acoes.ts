@@ -1,7 +1,6 @@
 "use server";
 
 import { refresh } from "next/cache";
-import { headers } from "next/headers";
 import {
   idClienteValido,
   lerIdPedido,
@@ -12,23 +11,17 @@ import {
 import { lerAcessoCarga } from "@/lib/consultas/carga-pedido";
 import { registrar, type CamposLog } from "@/lib/log";
 import { mensagens } from "@/lib/mensagens";
+import { comRegistroAcao, lerContextoRequisicao, rotaAcao } from "@/lib/registro-requisicao";
 import { criarClienteServidor } from "@/lib/supabase/servidor";
 
 export type EstadoPedido = { erro: string | null; aviso: string | null; pedidoId: number | null };
 
 type CamposBase = Pick<CamposLog, "id_requisicao" | "rota" | "user_id" | "tenant_id">;
 
-const formatoUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-async function lerIdRequisicao(): Promise<string> {
-  const doProxy = (await headers()).get("x-id-requisicao");
-  return doProxy && formatoUuid.test(doProxy) ? doProxy : crypto.randomUUID();
-}
-
 // A Server Action é uma rota própria e não herda a conferência da página. getUser valida o token no Auth;
 // lerAcessoCarga traz perfil, aal e tenant. A função do banco repete tudo, então aqui só se evita a chamada inútil.
 async function conferirSessao(rota: string): Promise<{ ok: true; campos: CamposBase; operador: boolean; tenantId: string | null } | { ok: false; erro: string }> {
-  const campos: CamposBase = { id_requisicao: await lerIdRequisicao(), rota, user_id: null, tenant_id: null };
+  const campos: CamposBase = { id_requisicao: (await lerContextoRequisicao()).idRequisicao, rota, user_id: null, tenant_id: null };
   const supabase = await criarClienteServidor();
   const { data: dadosUsuario } = await supabase.auth.getUser();
   if (!dadosUsuario.user) {
@@ -50,9 +43,17 @@ async function conferirSessao(rota: string): Promise<{ ok: true; campos: CamposB
   return { ok: true, campos, operador: acesso.operador, tenantId: acesso.tenantId };
 }
 
+export async function pedirCarga(_estadoAnterior: EstadoPedido, formulario: FormData): Promise<EstadoPedido> {
+  return comRegistroAcao(rotaAcao("/carga", "pedirCarga"), () => executarPedido(formulario));
+}
+
+export async function cancelarPedido(_estadoAnterior: EstadoPedido, formulario: FormData): Promise<EstadoPedido> {
+  return comRegistroAcao(rotaAcao("/carga", "cancelarPedido"), () => executarCancelamento(formulario));
+}
+
 // O cliente vem do formulário só para o operador; diretor e financeiro pedem para o próprio tenant, que sai da
 // sessão e nunca do formulário.
-export async function pedirCarga(_estadoAnterior: EstadoPedido, formulario: FormData): Promise<EstadoPedido> {
+async function executarPedido(formulario: FormData): Promise<EstadoPedido> {
   const recusa = (erro: string): EstadoPedido => ({ erro, aviso: null, pedidoId: null });
   const sessao = await conferirSessao("carga/pedir");
   if (!sessao.ok) return recusa(sessao.erro);
@@ -84,7 +85,7 @@ export async function pedirCarga(_estadoAnterior: EstadoPedido, formulario: Form
   return { erro: null, aviso: mensagens.pedido.pedidoNaFila, pedidoId: Number.isFinite(pedidoId) ? pedidoId : null };
 }
 
-export async function cancelarPedido(_estadoAnterior: EstadoPedido, formulario: FormData): Promise<EstadoPedido> {
+async function executarCancelamento(formulario: FormData): Promise<EstadoPedido> {
   const recusa = (erro: string): EstadoPedido => ({ erro, aviso: null, pedidoId: null });
   const sessao = await conferirSessao("carga/cancelar");
   if (!sessao.ok) return recusa(sessao.erro);

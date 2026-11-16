@@ -2,13 +2,15 @@
 
 import { useActionState } from "react";
 import { entrar, type EstadoEntrar } from "@/app/entrar/acoes";
+import { DesafioEntrada } from "@/componentes/DesafioEntrada";
 
 const estadoInicial: EstadoEntrar = { erro: null, email: "" };
 
 const classeCampo =
   "min-h-12 rounded-lg border border-borda bg-superficie px-3.5 text-[15px] text-texto focus-visible:border-texto";
 
-export function FormularioEntrar() {
+// chaveDesafio vem do servidor: nula, o formulário é só e-mail e senha; com valor, entra o widget contra robôs.
+export function FormularioEntrar({ chaveDesafio }: { chaveDesafio: string | null }) {
   const [estado, acao, enviando] = useActionState(entrar, estadoInicial);
 
   return (
@@ -44,6 +46,7 @@ export function FormularioEntrar() {
           className={classeCampo}
         />
       </div>
+      {chaveDesafio && <DesafioEntrada chave={chaveDesafio} rodada={estado} />}
       {estado.erro && (
         <p id="erro-entrar" role="alert" className="rounded-lg border border-alerta px-3.5 py-2.5 text-sm text-alerta">
           {estado.erro}

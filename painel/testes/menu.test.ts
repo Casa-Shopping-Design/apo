@@ -4,11 +4,11 @@ import { itemAtivo, itensMenu } from "../lib/menu";
 const destinos = (perfil: string | null) => itensMenu(perfil).map((item) => item.destino);
 
 describe("itensMenu", () => {
-  it("diretor vê Empresas antes do assistente e, no fim, Carga e Monitor", () => {
-    expect(destinos("diretor")).toEqual(["/", "/dre", "/obras", "/unidades", "/empresas", "/assistente", "/carga", "/monitor"]);
+  it("diretor vê Empresas antes do assistente e, no fim, Carga, Monitor e Auditoria", () => {
+    expect(destinos("diretor")).toEqual(["/", "/dre", "/obras", "/unidades", "/empresas", "/assistente", "/carga", "/monitor", "/auditoria"]);
   });
 
-  it("financeiro vê Carga, mas não Monitor", () => {
+  it("financeiro vê Carga, mas não Monitor nem Auditoria", () => {
     expect(destinos("financeiro")).toEqual(["/", "/dre", "/obras", "/unidades", "/empresas", "/assistente", "/carga"]);
   });
 
@@ -20,9 +20,9 @@ describe("itensMenu", () => {
     expect(destinos(perfil)).toEqual(["/", "/dre", "/obras", "/unidades", "/assistente"]);
   });
 
-  it("o operador da plataforma vê só Carga e Monitor, sem dado de negócio", () => {
-    expect(destinos("operador")).toEqual(["/carga", "/monitor"]);
-    expect(itensMenu("operador").map((item) => item.rotulo)).toEqual(["Carga", "Monitor"]);
+  it("o operador da plataforma vê só Carga, Monitor e Auditoria, sem dado de negócio", () => {
+    expect(destinos("operador")).toEqual(["/carga", "/monitor", "/auditoria"]);
+    expect(itensMenu("operador").map((item) => item.rotulo)).toEqual(["Carga", "Monitor", "Auditoria"]);
   });
 
   it("dá o rótulo Empresas ao item novo", () => {
