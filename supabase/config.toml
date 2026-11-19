@@ -413,3 +413,21 @@ enabled = true
 # declarative_schema_path = "./schemas"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+
+# Produção em São Paulo. Só o que difere do local; o resto vem dos blocos acima.
+[remotes.producao]
+project_id = "tqxgwfkpnbbwtwtdjdtf"
+
+[remotes.producao.auth]
+site_url = "https://apo-producao.vercel.app"
+additional_redirect_urls = ["https://apo-producao.vercel.app/**", "https://*.apotecs.com.br/**"]
+enable_signup = false
+
+[remotes.producao.auth.email]
+enable_signup = false
+enable_confirmations = true
+secure_password_change = true
+max_frequency = "60s"
+
+[remotes.producao.db.seed]
+enabled = false
