@@ -26,7 +26,7 @@ Decisões do João neste dia: entram as duas bases (`rsbarreto`, da Verg, e `sho
 6. João, no Dashboard do Supabase: bloqueio de senha vazada em https://supabase.com/dashboard/project/tqxgwfkpnbbwtwtdjdtf/auth/protection.
 7. Diretor de cada cliente com senha provisória (passo 20) e primeira carga pelo controlador (passo 21).
 
-Fica para uma migration nova: RLS ligado e forçado em `raw.registro`.
+O RLS ligado e forçado em `raw.registro` entra na migration 0055, que ainda precisa ser aplicada na produção e na demo.
 
 ### Feito em 20/11
 
