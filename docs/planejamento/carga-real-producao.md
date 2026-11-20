@@ -28,6 +28,15 @@ Decisões do João neste dia: entram as duas bases (`rsbarreto`, da Verg, e `sho
 
 Fica para uma migration nova: RLS ligado e forçado em `raw.registro`.
 
+### Feito em 20/11
+
+- PR 18 mesclado (8ee8857). A Carga controlada agendada fica parada enquanto `CARGA_CONTROLADA_ATIVA` não existir, e a primeira passagem veio `skipped`.
+- Environments `controlador`, `cliente-rsbarreto` e `cliente-shoppingdesign` criados, todos só com a `main`, os de cliente com o João como revisor. `DATABASE_URL` da produção nos três e `ORIGEM_AUTENTICACAO=basic` nos de cliente. Os três `ORIGEM_*` da shoppingdesign foram gravados com texto errado colado da área de transferência e precisam ser regravados; os da `rsbarreto` esperam a senha nova.
+- O provedor de e-mail da produção estava desligado, porque `enable_signup = false` em `[remotes.producao.auth.email]` desliga o provedor inteiro. A linha saiu do `config.toml`, e no Dashboard o provedor voltou a ficar ligado, junto com senha atual na troca e bloqueio de senha vazada. Link mágico e OTP por e-mail foram desligados, porque o painel não usa nenhum dos dois.
+- Conferido no Dashboard: TOTP ligado, gancho `app.claims_jwt` ativo, Site URL e redirecionamentos no `apo-producao`, `raw` e `staging` fora da Data API.
+- Projeto `apo-producao` criado na Vercel (Root Directory `painel`), sem nenhum deploy. Ignored Build Step só deixa passar o branch `producao`, funções em `gru1`, Deployment Protection em Standard e regra "Limite de login e assistente" publicada. O Production Branch segue `main` porque a Vercel não aceita um branch que ainda não existe; ao criar `producao` no GitHub, trocar em https://vercel.com/casa-design/apo-producao/settings/environments/production.
+- A equipe `casa-design` na Vercel está no Hobby, não no Pro. O Hobby não permite uso comercial e limita as funções a uma região.
+
 ### Comandos de 18/11
 
 Environment do controlador, com a `DATABASE_URL` da produção lida do arquivo local:

@@ -424,7 +424,8 @@ additional_redirect_urls = ["https://apo-producao.vercel.app/**", "https://*.apo
 enable_signup = false
 
 [remotes.producao.auth.email]
-enable_signup = false
+# Sem enable_signup aqui: neste bloco ele desliga o provedor de e-mail inteiro e ninguém entra com senha.
+# O cadastro livre já fica fechado pelo enable_signup de [remotes.producao.auth].
 enable_confirmations = true
 secure_password_change = true
 max_frequency = "60s"
