@@ -419,8 +419,8 @@ enabled = true
 project_id = "tqxgwfkpnbbwtwtdjdtf"
 
 [remotes.producao.auth]
-site_url = "https://apo-producao.vercel.app"
-additional_redirect_urls = ["https://apo-producao.vercel.app/**", "https://*.apotecs.com.br/**"]
+site_url = "https://app.apotecs.com.br"
+additional_redirect_urls = ["https://app.apotecs.com.br/**", "https://*.apotecs.com.br/**", "https://apo-producao.vercel.app/**"]
 enable_signup = false
 
 [remotes.producao.auth.email]
