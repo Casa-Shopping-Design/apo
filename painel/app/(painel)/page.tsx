@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { IndicadoresObra } from "@/componentes/CartaoIndicador";
 import { FaixaCarteira } from "@/componentes/FaixaCarteira";
 import { FaixaResultado } from "@/componentes/FaixaResultado";
@@ -7,6 +8,7 @@ import { IndicadorVgv } from "@/componentes/IndicadorVgv";
 import { SecaoAlertas } from "@/componentes/ListaAlertas";
 import { TabelaObras } from "@/componentes/TabelaObras";
 import type { AlertaObra } from "@/lib/alertas";
+import { lerAcessoCarga } from "@/lib/consultas/carga-pedido";
 import { buscarCarteira, listarAlertas, type PosicaoCarteira } from "@/lib/consultas/carteira";
 import { buscarResumoCarteira } from "@/lib/consultas/dre";
 import { listarPosicaoObras, type PosicaoObra } from "@/lib/consultas/posicao";
@@ -35,6 +37,8 @@ async function carregarVisaoGeral(): Promise<{
 // A faixa de resultado só aparece para quem o RLS deixa ler a DRE (diretor e financeiro com segundo fator, e
 // leitura).
 export default async function PaginaVisaoGeral() {
+  // O operador da plataforma não lê dado de negócio: a tela dele é a de carga.
+  if ((await lerAcessoCarga()).operador) redirect("/carga");
   const { obras, carteira, alertas, resultado } = await carregarVisaoGeral();
 
   return (

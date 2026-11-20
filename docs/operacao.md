@@ -100,6 +100,26 @@ gh run watch
 
 A documentação do GitHub diz que, em repositório público, o agendamento é desativado depois de 60 dias sem atividade no repositório. Para repositório privado a documentação não cita a regra. Por isso, uma vez por mês, confira em Actions que a Carga noturna rodou no dia 1 ou 15 mais recente; se o workflow aparecer desativado, reative no botão "Enable workflow". A rota de saúde também acusa: com a carga parada, ela vira 503 depois de 17 dias e 2 horas.
 
+## Carga controlada por pedido (clientes reais)
+
+Cliente real não usa o cron da demo. O botão do painel chama `app.pedir_carga(tenant)`, que cria um pedido em `app.carga_pedido`; cliente em modo `agendado` ganha um pedido de agenda nos dias 1 e 15 de cada mês, no horário cadastrado (`cadastrar_cliente.py --modo-carga agendado --horario-carga 02:30`). Se o controlador ficar parado no dia, o pedido sai na primeira passagem depois. Carga diária não existe, por decisão do João em 04/11 (migration 0052). Cliente no modo `manual` não conta como atrasado na rota de saúde. O workflow `carga_controlada.yml` roda `scripts/controlar_cargas.py` a cada 15 minutos: expira pedido parado, cria os de agenda, reserva até 3 pedidos (teto global, um por cliente, só com cota do dia aberta) e dispara um job por pedido no Environment `cliente-<conta_origem>`. O carregador marca progresso no pedido e grava cada chamada em `app.requisicao_registro`, que o monitor lê. O controlador apaga, em lotes, as requisições e os eventos de auditoria mais velhos que o prazo de `app.retencao_registro` (7 dias para os dois tipos, migration 0053); ampliar o prazo é uma migration que troca o valor. A regra completa está na ADR 0023.
+
+A tela `/auditoria` (migration 0054) junta os eventos de `app.evento_auditoria`, as perguntas ao assistente e o motivo das janelas de suporte, com filtro por pessoa, evento e período. Abre para o diretor do cliente e para o administrador da plataforma, sempre com o segundo fator; o diretor lê só o próprio cliente, pelo RLS. Exportar o CSV grava um evento `exportacao` antes de montar o arquivo, e sem esse registro não há arquivo. Na mesma tela ficam as sessões abertas por pessoa e o botão que as encerra (`app.encerrar_sessoes`): as sessões saem de `auth.sessions` na hora, mas o access token já emitido continua aceito até vencer (`jwt_expiry`, uma hora). Troca de senha vira evento `senha_trocada` por um gatilho em `auth.users`, qualquer que seja o caminho da troca. As perguntas ao assistente não entram na rotina de retenção e ficam além do prazo dos eventos. No `/monitor`, cada linha mostra o IP de quem acessou e abre um detalhe com as chamadas feitas pela mesma requisição.
+
+Para testar um cliente sem o GitHub, com a credencial do ERP exportada no terminal:
+
+```bash
+export DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+python scripts/controlar_cargas.py --local
+```
+
+Para acompanhar, no SQL Editor:
+
+```sql
+select id, origem, situacao, etapa_atual, tarefas_concluidas, tarefas_total, erro_resumo, atualizado_em
+from app.carga_pedido order by id desc limit 20;
+```
+
 ## Excluir um cliente
 
 `app.excluir_tenant(uuid)` apaga o tenant e, pela chave estrangeira em cascata, tudo que tem `tenant_id` em `app`, `raw` e `staging`: obras, usuários vinculados, registros brutos, staging, marcas de carga, histórico de execuções, estudos de viabilidade e perguntas ao assistente. Só o dono do banco executa (`DATABASE_URL` do servidor ou SQL Editor); `anon` e `authenticated` não têm `execute`. A função só aceita tenant com `status = 'inativo'`, para a exclusão ser sempre o segundo passo, e espera qualquer carga do mesmo cliente terminar antes de apagar.

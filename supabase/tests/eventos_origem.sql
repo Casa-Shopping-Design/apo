@@ -171,8 +171,8 @@ select ok(
 select is_empty(
   $$select p.oid::regprocedure::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'app' and has_function_privilege('anon', p.oid, 'execute')
-      and p.proname <> 'registrar_evento_origem'$$,
-  'anon só executa a função de registro de evento no schema app'
+      and p.proname not in ('registrar_evento_origem', 'registrar_entrada_recusada')$$,
+  'anon só executa o registro de evento e o de entrada recusada no schema app'
 );
 -- carga_execucao.sql repete esta lista fechada: a rota de saúde lê public.ultima_carga(), fora de app.
 

@@ -5,7 +5,8 @@ import { criarClienteServidor } from "@/lib/supabase/servidor";
 
 export class ErroConsultaCarga extends Error {}
 
-export type SituacaoCarga = "ok" | "falha" | "executando" | null;
+// "sem_agenda": nenhum tenant ativo tem carga agendada, então não há carga que possa estar atrasada.
+export type SituacaoCarga = "ok" | "falha" | "executando" | "sem_agenda" | null;
 
 export type SaudeCarga = { concluidaEm: string | null; situacao: SituacaoCarga };
 
@@ -34,6 +35,9 @@ export async function buscarSaudeCarga(limiteMs: number): Promise<SaudeCarga> {
   const situacao = linha?.situacao;
   return {
     concluidaEm: linha?.concluida_em ?? null,
-    situacao: situacao === "ok" || situacao === "falha" || situacao === "executando" ? situacao : null,
+    situacao:
+      situacao === "ok" || situacao === "falha" || situacao === "executando" || situacao === "sem_agenda"
+        ? situacao
+        : null,
   };
 }

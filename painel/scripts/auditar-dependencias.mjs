@@ -8,6 +8,18 @@ const aceites = [
     prazo: "2026-11-30",
     motivo: "chega só pelo eslint-config-next, no lint; não há versão corrigida e não vai para a Vercel",
   },
+  {
+    alerta: "https://github.com/advisories/GHSA-3g3m-2fjr-6pw4",
+    pacote: "glob",
+    prazo: "2026-11-30",
+    motivo: "chega só pelo @sentry/bundler-plugins, no build, varrendo arquivos nossos; o Sentry 11.10 ainda pede glob ^13",
+  },
+  {
+    alerta: "https://github.com/advisories/GHSA-g3hv-75wg-m249",
+    pacote: "minimatch",
+    prazo: "2026-11-30",
+    motivo: "chega pelo eslint 9, pelo typescript-eslint e pelo glob do build, sempre com padrões nossos; sem versão corrigida nessas linhas",
+  },
 ];
 
 const severidadesQueReprovam = new Set(["moderate", "high", "critical"]);

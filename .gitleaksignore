@@ -1,0 +1,7 @@
+# Achados da varredura de segredos que foram conferidos e não são segredo. Cada linha vale para um commit,
+# um arquivo, uma regra e uma linha; mudar qualquer um deles faz o achado voltar.
+
+# docs/operacao/protecao-login.md no commit 1416afa: valores de exemplo num comando curl do guia
+# ("CHAVE_PUBLICA" e uma senha inventada). O exemplo foi reescrito com variáveis no commit seguinte.
+1416afad692339e1fd52475a1fb2f87e0fa69997:docs/operacao/protecao-login.md:curl-auth-header:34
+1416afad692339e1fd52475a1fb2f87e0fa69997:docs/operacao/protecao-login.md:generic-api-key:34

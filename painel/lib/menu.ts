@@ -1,4 +1,7 @@
+import { perfilVeCarga, perfilVeMonitor } from "./carga-pedido";
 import { perfilVeEmpresas } from "./empresa";
+import { perfilOperador } from "./supabase/nivel-acesso";
+import { perfilVeAuditoria } from "./trilha-auditoria";
 
 export type ItemMenu = { rotulo: string; destino: string };
 
@@ -11,11 +14,23 @@ const itensObra: ItemMenu[] = [
 
 const itemEmpresas: ItemMenu = { rotulo: "Empresas", destino: "/empresas" };
 const itemAssistente: ItemMenu = { rotulo: "Assistente", destino: "/assistente" };
+const itemCarga: ItemMenu = { rotulo: "Carga", destino: "/carga" };
+const itemMonitor: ItemMenu = { rotulo: "Monitor", destino: "/monitor" };
+const itemAuditoria: ItemMenu = { rotulo: "Auditoria", destino: "/auditoria" };
 
-// perfil é o código cru (diretor, financeiro, leitura, gerente_obra). Esconder o item não protege a rota:
-// cada tela de empresa confere o perfil de novo e o RLS filtra as linhas.
+// perfil é o código cru (diretor, financeiro, leitura, gerente_obra, operador). Esconder o item não protege a
+// rota: cada tela confere o perfil de novo e o RLS filtra as linhas. O operador da plataforma não lê dado de
+// negócio, então para ele o menu tem só a carga, o monitor e a auditoria.
 export function itensMenu(perfil: string | null): ItemMenu[] {
-  return [...itensObra, ...(perfilVeEmpresas(perfil) ? [itemEmpresas] : []), itemAssistente];
+  if (perfil === perfilOperador) return [itemCarga, itemMonitor, itemAuditoria];
+  return [
+    ...itensObra,
+    ...(perfilVeEmpresas(perfil) ? [itemEmpresas] : []),
+    itemAssistente,
+    ...(perfilVeCarga(perfil) ? [itemCarga] : []),
+    ...(perfilVeMonitor(perfil) ? [itemMonitor] : []),
+    ...(perfilVeAuditoria(perfil) ? [itemAuditoria] : []),
+  ];
 }
 
 export function itemAtivo(caminho: string, destino: string): boolean {

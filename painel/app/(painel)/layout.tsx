@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import { CarimboCarga } from "@/componentes/CarimboCarga";
 import { MenuLateral } from "@/componentes/MenuLateral";
 import { exigirIdentidade } from "@/lib/consultas/identidade";
-import { caminhosAcesso, decidirDestino } from "@/lib/supabase/nivel-acesso";
+import { registrarPaginaPainel } from "@/lib/registro-requisicao";
+import { caminhosAcesso, decidirDestino, perfilOperador } from "@/lib/supabase/nivel-acesso";
 import { criarClienteServidor } from "@/lib/supabase/servidor";
 import { lerNivelSessao } from "@/lib/supabase/sessao";
 
@@ -17,14 +18,21 @@ async function exigirSegundoFator(): Promise<string | null> {
 }
 
 // O proxy já redireciona quem não entrou ou não passou pelo segundo fator; a checagem se repete aqui
-// porque proxy sozinho não protege rota.
+// porque proxy sozinho não protege rota. A entrada da página vai para o monitor depois da resposta; quem
+// não entrou não deixa linha, porque a função do banco exige usuário.
 export default async function LayoutPainel({ children }: LayoutProps<"/">) {
+  await registrarPaginaPainel();
   const identidade = await exigirIdentidade();
   const codigoPerfil = await exigirSegundoFator();
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
-      <MenuLateral perfil={identidade.perfil} codigoPerfil={codigoPerfil} construtora={identidade.construtora} />
+      <MenuLateral
+        perfil={codigoPerfil === perfilOperador ? "Operador da plataforma" : identidade.perfil}
+        codigoPerfil={codigoPerfil}
+        construtora={identidade.construtora}
+        clientes={identidade.clientes}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
         <main className="flex flex-1 flex-col gap-10 px-4 py-6 md:px-12 md:py-9 print:p-0">{children}</main>
         <footer className="border-t border-borda px-4 py-4 md:px-12 print:px-0">

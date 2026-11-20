@@ -52,12 +52,13 @@ const banco = {
   temFator: true,
   tenantNoClaim: "tenant-teste" as string | null,
   tenantNoBanco: null as string | null,
-  // null reserva normalmente; "limite" e "teto" simulam o P0001 que app.reservar_pergunta levanta.
-  recusaReserva: null as "limite" | "teto" | null,
+  // null reserva normalmente; "limite", "teto" e "franquia" simulam o P0001 que app.reservar_pergunta levanta.
+  recusaReserva: null as "limite" | "teto" | "franquia" | null,
   proximoId: 1,
   linhas: [] as Registro[],
   registros: [] as Registro[],
   execucoes: [] as ArgumentosExecucao[],
+  requisicoes: [] as Registro[],
 };
 
 type ArgumentosExecucao = { p_id_pergunta: number; p_sql: string; p_assinatura: string };
@@ -93,6 +94,10 @@ function clienteBanco() {
       }),
       rpc: async (nome: string, argumentos: Registro) => {
         if (nome === "tenant_atual") return { data: banco.tenantNoBanco, error: null };
+        if (nome === "registrar_requisicao_painel") {
+          banco.requisicoes.push(argumentos);
+          return { data: null, error: null };
+        }
         // Perfil vazio simula o banco sem resposta: a sessão fica com perfilLido falso.
         if (nome === "perfil_atual") {
           return banco.perfil ? { data: banco.perfil, error: null } : { data: null, error: { code: "42501" } };
@@ -181,6 +186,8 @@ async function perguntar(pergunta: string) {
       body: JSON.stringify({ pergunta }),
     }),
   );
+  // Fora de uma requisição do Next o registro no monitor roda solto, depois da resposta: espera a fila esvaziar.
+  await new Promise((resolver) => setTimeout(resolver, 0));
   return { status: resposta.status, corpo: await resposta.json() };
 }
 
@@ -204,6 +211,7 @@ beforeEach(() => {
     linhas: [],
     registros: [],
     execucoes: [],
+    requisicoes: [],
   });
   modelo.respostas = [];
   modelo.chamadas = [];
@@ -221,6 +229,16 @@ describe("rota do assistente e o segundo fator", () => {
     expect(banco.registros).toHaveLength(0);
     expect(banco.execucoes).toHaveLength(0);
     expect(modelo.chamadas).toHaveLength(0);
+    expect(banco.requisicoes).toEqual([
+      expect.objectContaining({
+        p_sistema: "painel_api",
+        p_direcao: "entrada",
+        p_metodo: "POST",
+        p_rota: "/api/assistente",
+        p_status_http: 403,
+        p_classe_erro: "negado",
+      }),
+    ]);
   });
 
   it("atende o gerente de obra em aal1", async () => {
@@ -254,6 +272,13 @@ describe("rota do assistente com texto livre", () => {
     expect(banco.execucoes).toHaveLength(1);
     expect(banco.execucoes[0].p_sql).toMatch(/LIMIT \(500\)$/);
     expect(banco.registros).toHaveLength(1);
+    // Duas chamadas ao modelo (gerar e redigir) e a entrada da rota, sem pergunta, SQL nem token.
+    expect(banco.requisicoes.map((linha) => [linha.p_sistema, linha.p_direcao, linha.p_rota, linha.p_status_http, linha.p_classe_erro])).toEqual([
+      ["anthropic", "saida", "/v1/messages", 200, null],
+      ["anthropic", "saida", "/v1/messages", 200, null],
+      ["painel_api", "entrada", "/api/assistente", 200, null],
+    ]);
+    expect(JSON.stringify(banco.requisicoes)).not.toContain("exposicao_maxima");
     expect(banco.registros[0]).toMatchObject({
       resultado: "ok",
       linhas_devolvidas: 2,
@@ -340,6 +365,18 @@ describe("rota do assistente com texto livre", () => {
     expect(corpo.erro).toMatch(/limite diário de uso do assistente/);
     expect(corpo.erro).not.toMatch(/por hora/);
     expect(modelo.chamadas).toHaveLength(0);
+  });
+
+  it("recusa com 429 e mensagem própria quando a franquia mensal do plano acabou", async () => {
+    banco.recusaReserva = "franquia";
+
+    const { status, corpo } = await perguntar("Quanto dinheiro próprio cada obra precisa no pior momento?");
+
+    expect(status).toBe(429);
+    expect(corpo.erro).toMatch(/franquia mensal/);
+    expect(corpo.erro).not.toMatch(/por hora|limite diário/);
+    expect(modelo.chamadas).toHaveLength(0);
+    expect(banco.registros).toHaveLength(0);
   });
 
   it("reserva a pergunta antes de chamar o modelo e conclui a reserva depois da execução", async () => {

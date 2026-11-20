@@ -2,7 +2,7 @@
 -- seguem em aal1 e que toda tabela com política permissiva tem a restritiva do segundo fator.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(24);
+select plan(25);
 
 insert into app.tenant (id, razao_social) values
   ('0e000000-0000-4000-8000-0000000002fa', 'Construtora Segundo Fator');
@@ -86,13 +86,14 @@ select set_config('request.jwt.claims', '{"sub": "0a000000-0000-4000-8000-000000
 set local role authenticated;
 select is((select count(*) from staging.parcela_receber), 0::bigint, 'diretor sem o claim aal não lê parcela');
 
--- Perfil vindo do claim, como o hook grava, também é barrado
+-- Desde a 0045 o perfil sai da tabela: o claim de financeiro não promove o gerente, que segue lendo só a obra dele
 reset role;
 select set_config('request.jwt.claims',
   '{"sub": "0a000000-0000-4000-8000-0000000c02fa", "role": "authenticated", "aal": "aal1",
     "app_metadata": {"tenant_id": "0e000000-0000-4000-8000-0000000002fa", "perfil": "financeiro"}}', true);
 set local role authenticated;
-select is((select count(*) from staging.parcela_receber), 0::bigint, 'perfil financeiro no claim em aal1 não lê parcela');
+select is(app.perfil_atual(), 'gerente_obra', 'perfil financeiro no claim não vale mais que o gerente_obra da tabela');
+select is((select count(*) from staging.parcela_receber), 1::bigint, 'com o claim de financeiro o gerente lê só a parcela da obra dele');
 
 -- Diretor com o segundo fator
 reset role;

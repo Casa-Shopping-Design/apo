@@ -126,3 +126,49 @@ test("diretor abre a DRE com as três obras e a gerente vê o aviso de tela rest
   await expect(paginaGerente.getByRole("link", { name: "Residencial Aurora" })).toHaveCount(0);
   await contextoGerente.close();
 });
+
+// Cliente e textos de testes/e2e/outro-cliente.sql, que o CI carrega antes do Playwright.
+const clienteVizinho = "22222222-2222-4222-8222-222222222222";
+
+test("diretor vê a auditoria do próprio cliente e nada do cliente vizinho, nem pelo endereço nem pela exportação", async ({ page }) => {
+  await entrarComoDiretor(page);
+  await page.goto("/auditoria");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Auditoria");
+
+  const registros = page.getByRole("table", { name: "Registros da auditoria, do mais recente para o mais antigo." });
+  await expect(registros.getByRole("cell", { name: "Entrada no painel" }).first()).toBeVisible();
+  await expect(registros.getByRole("cell", { name: "Perfil alterado" }).first()).toBeVisible();
+  await expect(registros.getByText("Cliente suspenso")).toHaveCount(0);
+  await expect(page.getByText("Pergunta do cliente vizinho")).toHaveCount(0);
+
+  await page.goto(`/auditoria?cliente=${clienteVizinho}`);
+  await expect(registros.getByRole("cell", { name: "Perfil alterado" }).first()).toBeVisible();
+  await expect(registros.getByText("Cliente suspenso")).toHaveCount(0);
+  await expect(page.getByText("Pergunta do cliente vizinho")).toHaveCount(0);
+
+  const sessoes = page.getByRole("table", { name: "Pessoas com sessão aberta no painel." });
+  await expect(sessoes.getByRole("cell", { name: diretor.email, exact: true })).toBeVisible();
+
+  const exportacao = await page.request.post("/auditoria/exportar", { form: { cliente: clienteVizinho } });
+  expect(exportacao.status()).toBe(200);
+  expect(exportacao.headers()["content-type"]).toBe("text/csv; charset=utf-8");
+  const csv = await exportacao.text();
+  expect(csv).toContain("Perfil alterado");
+  expect(csv).not.toContain("Cliente suspenso");
+  expect(csv).not.toContain("Pergunta do cliente vizinho");
+
+  await page.goto("/auditoria?evento=exportacao");
+  await expect(registros.getByRole("cell", { name: "Exportação" }).first()).toBeVisible();
+});
+
+test("gerente não abre a auditoria nem exporta", async ({ page }) => {
+  await entrar(page, gerente);
+  await page.goto("/auditoria");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Auditoria");
+  await expect(page.getByText("Só o diretor e o administrador da plataforma abrem a auditoria.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("table")).toHaveCount(0);
+
+  const exportacao = await page.request.post("/auditoria/exportar", { form: {}, maxRedirects: 0 });
+  expect(exportacao.status()).toBe(303);
+  expect(exportacao.headers().location).toContain("falha=sem_permissao");
+});

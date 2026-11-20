@@ -2,7 +2,65 @@
 
 Levantamento de 15/11/2026 e roteiro em ordem para levar os dados reais do primeiro cliente (base `shoppingdesign` do ERP de origem) a um projeto de produção, sem passar pela demo. Cada passo diz quem faz. Migration e carga em banco hospedado só rodam depois do sim do João, passo a passo.
 
-## Onde estamos
+## Situação em 18/11
+
+Decisões do João neste dia: entram as duas bases (`rsbarreto`, da Verg, e `shoppingdesign`), a demo recebe as mesmas migrations da produção (D3), o diretor entra com senha provisória entregue em mãos (D4) e a Vercel da equipe `casa-design` está no Pro.
+
+| Peça | Situação |
+| --- | --- |
+| Supabase Pro | Contratado. Os projetos têm backup diário com 7 dias de retenção e rodam em compute Micro. PITR desligado |
+| Projeto de produção | `tqxgwfkpnbbwtwtdjdtf` (nome APO), sa-east-1, Micro. O APO criado em 16/11 estava em us-east-1, vazio, e foi apagado |
+| Migrations na produção | 0001 a 0054 do branch do PR 18, sem seed. Nenhum tenant, nenhum usuário |
+| Configuração da produção | Bloco `[remotes.producao]` do `config.toml`, enviado com `supabase config push`: `app` e `marts` expostos, cadastro livre desligado, confirmação de e-mail, troca de senha com reautenticação, senha mínima 12, gancho `app.claims_jwt`, TOTP. SSL obrigatório ligado. Storage ficou como o Supabase cria |
+| Conferência de segurança da produção | Nenhuma política `using (true)`, toda `security definer` com `search_path` vazio, views com `security_invoker`, gancho só para `supabase_auth_admin`. Três definer abertas ao `anon` de propósito: `public.ultima_carga`, `app.registrar_entrada_recusada` e `app.registrar_evento_origem`, todas com teto. `raw.registro` está sem RLS; `anon` e `authenticated` não têm `usage` em `raw`, e `raw` fica fora da API |
+| Chaves da produção | Senha do banco, `ASSISTENTE_CHAVE_ASSINATURA` (já gravada em `app.chave_assinatura_consulta`) e `AUDITORIA_CHAVE_HMAC` em `.env.producao.local` da pasta principal, modo 600, ignorado pelo git |
+| Demo (`xwqw`) | Passou de 0039 para 0054. Os três usuários foram para `app.usuario`, o tenant está `ativo`, a Carga noturna rodou verde (execução 44441393820) e `/api/saude` voltou com idade 0. O painel publicado ainda é o da `main`, que não chama nenhuma função que as 0044 a 0054 removem |
+
+### O que falta, em ordem
+
+1. João: commitar este branch (`joao/producao-sao-paulo`, só o `config.toml` e este documento) e enviar para o PR 18 com `git push origin HEAD:claude/saas-isolamento-tenant`. Depois tirar o PR 18 do rascunho e mesclar. A demo já está no esquema dele.
+2. João, no terminal: Environments `controlador`, `cliente-rsbarreto` e `cliente-shoppingdesign`, todos só com a `main` e os de cliente com o João como Required reviewer. A criação pelo Claude foi barrada pelo modo automático. Comandos na seção "Comandos de 18/11", abaixo.
+3. João, no ERP: gerar senha nova para o usuário de API da Verg, porque a antiga apareceu em print, e liberar os recursos REST do `shoppingdesign-sena` (lista do passo 3).
+4. Sondagem das duas bases (passo 4) e cadastro dos dois tenants na produção com `cadastrar_cliente.py`.
+5. João, na Vercel: projeto `apo-producao` (passos 13 a 15), com `NEXT_PUBLIC_SUPABASE_URL=https://tqxgwfkpnbbwtwtdjdtf.supabase.co`, a chave pública copiada de https://supabase.com/dashboard/project/tqxgwfkpnbbwtwtdjdtf/settings/api-keys e as duas chaves de `.env.producao.local`. Se o endereço final não for `apo-producao.vercel.app`, trocar `site_url` em `[remotes.producao.auth]` e rodar o `config push` de novo.
+6. João, no Dashboard do Supabase: bloqueio de senha vazada em https://supabase.com/dashboard/project/tqxgwfkpnbbwtwtdjdtf/auth/protection.
+7. Diretor de cada cliente com senha provisória (passo 20) e primeira carga pelo controlador (passo 21).
+
+Fica para uma migration nova: RLS ligado e forçado em `raw.registro`.
+
+### Comandos de 18/11
+
+Environment do controlador, com a `DATABASE_URL` da produção lida do arquivo local:
+
+```bash
+echo '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' | gh api -X PUT repos/Casa-Shopping-Design/apo/environments/controlador --input - -q .name && gh api -X POST repos/Casa-Shopping-Design/apo/environments/controlador/deployment-branch-policies -f name=main -f type=branch -q .name
+```
+
+```bash
+cd /Users/joaosena/Documents/painel-sienge-demo && printf 'postgresql://postgres.tqxgwfkpnbbwtwtdjdtf:%s@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=require' "$(grep '^APO_PRODUCAO_DB_SENHA=' .env.producao.local | cut -d= -f2)" | gh secret set DATABASE_URL --env controlador -R Casa-Shopping-Design/apo
+```
+
+Environments dos dois clientes, com revisão obrigatória do João e a mesma `DATABASE_URL`:
+
+```bash
+ID=$(gh api user -q .id); for c in rsbarreto shoppingdesign; do echo "{\"reviewers\":[{\"type\":\"User\",\"id\":$ID}],\"deployment_branch_policy\":{\"protected_branches\":false,\"custom_branch_policies\":true}}" | gh api -X PUT repos/Casa-Shopping-Design/apo/environments/cliente-$c --input - -q .name && gh api -X POST repos/Casa-Shopping-Design/apo/environments/cliente-$c/deployment-branch-policies -f name=main -f type=branch -q .name; done
+```
+
+```bash
+cd /Users/joaosena/Documents/painel-sienge-demo && for c in rsbarreto shoppingdesign; do printf 'postgresql://postgres.tqxgwfkpnbbwtwtdjdtf:%s@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=require' "$(grep '^APO_PRODUCAO_DB_SENHA=' .env.producao.local | cut -d= -f2)" | gh secret set DATABASE_URL --env cliente-$c -R Casa-Shopping-Design/apo && gh variable set ORIGEM_AUTENTICACAO --env cliente-$c --body basic -R Casa-Shopping-Design/apo; done
+```
+
+Credencial do ERP de cada base. O `gh secret set` sem valor pede o texto sem mostrar; `ORIGEM_URL_BASE` vai sem `/public/api/v1`.
+
+```bash
+gh secret set ORIGEM_URL_BASE --env cliente-rsbarreto -R Casa-Shopping-Design/apo && gh secret set ORIGEM_USUARIO --env cliente-rsbarreto -R Casa-Shopping-Design/apo && gh secret set ORIGEM_SENHA --env cliente-rsbarreto -R Casa-Shopping-Design/apo
+```
+
+```bash
+gh secret set ORIGEM_URL_BASE --env cliente-shoppingdesign -R Casa-Shopping-Design/apo && gh secret set ORIGEM_USUARIO --env cliente-shoppingdesign -R Casa-Shopping-Design/apo && gh secret set ORIGEM_SENHA --env cliente-shoppingdesign -R Casa-Shopping-Design/apo
+```
+
+## Onde estamos (levantamento de 15/11)
 
 ### O que já existe no código
 

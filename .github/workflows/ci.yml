@@ -85,6 +85,8 @@ jobs:
 
           export DATABASE_URL="$DB_URL"
           python scripts/vincular_usuarios_demo.py --diretor "$id_diretor" --gerente "$id_gerente"
+          # Segundo cliente para o teste de isolamento da auditoria.
+          python -c 'import os, pathlib, psycopg; psycopg.connect(os.environ["DATABASE_URL"], autocommit=True).execute(pathlib.Path("painel/testes/e2e/outro-cliente.sql").read_text())'
 
           {
             echo "DATABASE_URL=$DB_URL"

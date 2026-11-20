@@ -7,6 +7,7 @@ describe("perfilExigeSegundoFator", () => {
   it.each([
     ["diretor", true],
     ["financeiro", true],
+    ["operador", true],
     ["comercial", false],
     ["gerente_obra", false],
     ["leitura", false],
@@ -35,7 +36,7 @@ describe("decidirDestino sem usuário", () => {
 });
 
 describe("decidirDestino para perfis que exigem segundo fator", () => {
-  it.each(["diretor", "financeiro"])("%s em aal1 sem fator vai cadastrar", (perfil) => {
+  it.each(["diretor", "financeiro", "operador"])("%s em aal1 sem fator vai cadastrar", (perfil) => {
     expect(decidirDestino({ ...diretor, perfil })).toBe("cadastrar");
     expect(decidirDestino({ ...diretor, perfil, caminho: "/assistente" })).toBe("cadastrar");
   });
@@ -44,7 +45,7 @@ describe("decidirDestino para perfis que exigem segundo fator", () => {
     expect(decidirDestino({ ...diretor, perfil, temFator: true })).toBe("verificar");
   });
 
-  it.each(["diretor", "financeiro"])("%s em aal2 fica liberado", (perfil) => {
+  it.each(["diretor", "financeiro", "operador"])("%s em aal2 fica liberado", (perfil) => {
     expect(decidirDestino({ ...diretor, perfil, aal: "aal2", temFator: true })).toBe("liberado");
     expect(decidirDestino({ ...diretor, perfil, aal: "aal2", temFator: true, caminho: caminhosAcesso.cadastrar })).toBe("liberado");
   });
@@ -118,5 +119,36 @@ describe("sessaoExigeSegundoFator", () => {
     ["gerente_obra", false, true],
   ])("perfil %s, lido %s, exige: %s", (perfil, perfilLido, esperado) => {
     expect(sessaoExigeSegundoFator(perfil, perfilLido)).toBe(esperado);
+  });
+
+  it.each([
+    ["leitura", true, true],
+    ["gerente_obra", true, true],
+    ["diretor", false, false],
+    ["leitura", false, false],
+  ])("o vínculo decide: perfil %s com exige %s dá %s", (perfil, exige, esperado) => {
+    expect(sessaoExigeSegundoFator(perfil, true, exige)).toBe(esperado);
+  });
+
+  it("operador exige mesmo com o vínculo liberado, e perfil não lido fecha mesmo com o vínculo", () => {
+    expect(sessaoExigeSegundoFator("operador", true, false)).toBe(true);
+    expect(sessaoExigeSegundoFator("leitura", false, false)).toBe(true);
+  });
+});
+
+describe("decidirDestino com a exigência do vínculo", () => {
+  it("leitura que exige vai cadastrar em aal1 e fica liberada em aal2", () => {
+    expect(decidirDestino({ ...diretor, perfil: "leitura", exigeSegundoFator: true })).toBe("cadastrar");
+    expect(decidirDestino({ ...diretor, perfil: "leitura", exigeSegundoFator: true, temFator: true })).toBe("verificar");
+    expect(decidirDestino({ ...diretor, perfil: "leitura", exigeSegundoFator: true, aal: "aal2" })).toBe("liberado");
+  });
+
+  it("diretor com o vínculo liberado passa em aal1", () => {
+    expect(decidirDestino({ ...diretor, exigeSegundoFator: false })).toBe("liberado");
+  });
+
+  it("sem o claim vale a regra por perfil", () => {
+    expect(decidirDestino({ ...diretor, exigeSegundoFator: null })).toBe("cadastrar");
+    expect(decidirDestino({ ...diretor, perfil: "leitura", exigeSegundoFator: undefined })).toBe("liberado");
   });
 });
