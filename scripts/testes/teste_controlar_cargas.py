@@ -47,6 +47,18 @@ class TesteSemBanco(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             controlar_cargas.gravar_saida_github({"admitidos": []})
 
+    def test_log_publico_sem_tenant_nem_environment(self):
+        resultado = {"expirados": 1, "admitidos": [{"pedido": 3, "tenant": "uuid-do-cliente", "ambiente": "cliente-x"}],
+                     "execucoes": [{"pedido": 3, "tenant": "uuid-do-cliente", "ambiente": "cliente-x",
+                                    "codigos": {"carregar_origem": 0}, "fechado_pelo_controlador": False}]}
+        resumo = controlar_cargas.resumo_para_log(resultado)
+        self.assertEqual(resumo["admitidos"], [3])
+        self.assertEqual(resumo["expirados"], 1)
+        texto = json.dumps(resumo)
+        self.assertNotIn("uuid-do-cliente", texto)
+        self.assertNotIn("cliente-x", texto)
+        self.assertEqual(resultado["admitidos"][0]["ambiente"], "cliente-x")
+
     def test_argumentos(self):
         args = controlar_cargas.ler_argumentos(["--local", "--teto-global", "2", "--sem-limpeza"])
         self.assertTrue(args.local)
@@ -125,15 +137,40 @@ class TesteBancoLocal(unittest.TestCase):
         restante = self.conexao.execute("select count(*) from app.evento_auditoria where tenant_id = %s", (tenant,)).fetchone()[0]
         self.assertEqual(restante, 1)
 
+    def test_credencial_de_outra_conta_nao_carrega_nada(self):
+        conta = f"loc-{uuid.uuid4().hex[:6]}"
+        tenant = self.criar_tenant(conta, indexador_correcao=1)
+        pedido = self.pedir(tenant, "reservado")
+        origem = Origem()
+        with ApiFalsa(rest=origem.rest(), bulk=origem.bulk()) as api:
+            ambiente = {
+                **{chave: valor for chave, valor in os.environ.items() if not chave.startswith(("ORIGEM_", "CRM_"))},
+                "DATABASE_URL": banco_local(), "ORIGEM_URL_BASE": f"{api.url_base}/outra-conta",
+                "ORIGEM_AUTENTICACAO": "basic", "ORIGEM_USUARIO": "usuario-teste", "ORIGEM_SENHA": "senha-teste",
+                "CRM_URL_BASE": "",
+            }
+            execucoes = controlar_cargas.executar_local(
+                self.conexao, [{"pedido": pedido, "tenant": tenant, "ambiente": "cliente-x"}], ambiente)
+            chamadas = len(api.requisicoes)
+        self.assertNotEqual(execucoes[0]["codigos"]["carregar_origem"], 0)
+        self.assertEqual(chamadas, 0)
+        situacao, erro = self.conexao.execute(
+            "select situacao, erro_resumo from app.carga_pedido where id = %s", (pedido,)).fetchone()
+        self.assertEqual(situacao, "falha")
+        self.assertEqual(erro, "carga não começou: BaseDeOutroCliente")
+        brutos = self.conexao.execute("select count(*) from raw.registro where tenant_id = %s", (tenant,)).fetchone()[0]
+        self.assertEqual(brutos, 0)
+
     def test_modo_local_roda_o_carregador_e_o_pedido_termina_concluido(self):
-        tenant = self.criar_tenant(f"loc-{uuid.uuid4().hex[:6]}", indexador_correcao=1)
+        conta = f"loc-{uuid.uuid4().hex[:6]}"
+        tenant = self.criar_tenant(conta, indexador_correcao=1)
         self.conexao.execute("insert into app.centro_custo (tenant_id, id_origem, nome) values (%s, 101, 'Obra A')", (tenant,))
         pedido = self.pedir(tenant, "reservado")
         origem = Origem()
         with ApiFalsa(rest=origem.rest(), bulk=origem.bulk()) as api:
             ambiente = {
                 **{chave: valor for chave, valor in os.environ.items() if not chave.startswith(("ORIGEM_", "CRM_"))},
-                "DATABASE_URL": banco_local(), "ORIGEM_URL_BASE": api.url_base, "ORIGEM_AUTENTICACAO": "basic",
+                "DATABASE_URL": banco_local(), "ORIGEM_URL_BASE": f"{api.url_base}/{conta}", "ORIGEM_AUTENTICACAO": "basic",
                 "ORIGEM_USUARIO": "usuario-teste", "ORIGEM_SENHA": "senha-teste", "CRM_URL_BASE": "",
             }
             execucoes = controlar_cargas.executar_local(

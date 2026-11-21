@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import sys
+import urllib.parse
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
@@ -1283,6 +1284,29 @@ def opcoes_de_ambiente(ambiente=None):
     return opcoes_so_do_ambiente(os.environ if ambiente is None else ambiente)
 
 
+class BaseDeOutroCliente(ValueError):
+    pass
+
+
+def conta_da_credencial(credencial):
+    """Conta do ERP que a credencial alcança: o último trecho da URL no basic, o tenant no OAuth."""
+    if credencial.autenticacao == "oauth":
+        return credencial.tenant_oauth.strip().lower()
+    return urllib.parse.urlsplit(credencial.url_base).path.rstrip("/").rsplit("/", 1)[-1].strip().lower()
+
+
+def conferir_conta_do_tenant(conexao, tenant, credencial):
+    """Recusa antes da primeira chamada quando a credencial do Environment é de outra base do ERP.
+
+    Sem isso, um secret trocado grava a base de um cliente no tenant de outro, e os endpoints completos apagam
+    o que o tenant certo tinha.
+    """
+    linha = conexao.execute("select conta_origem from app.tenant where id = %s", (tenant,)).fetchone()
+    esperada = (linha[0] or "").strip().lower() if linha else ""
+    if not esperada or conta_da_credencial(credencial) != esperada:
+        raise BaseDeOutroCliente("a credencial do ERP não é da conta deste tenant; confira o Environment")
+
+
 def configuracao_do_tenant(conexao, tenant, ambiente):
     """Configuração do banco, com o ambiente por cima só quando ORIGEM_SOBRESCREVER_CONFIGURACAO está ligada."""
     configuracao, aplicadas, ignoradas = sobrescrever_pelo_ambiente(ler_configuracao(conexao, tenant), ambiente)
@@ -1312,6 +1336,7 @@ def main():
         registro = RegistroRequisicoes(conexao, args.tenant, args.pedido, ao_anotar=acompanhamento.batimento)
         try:
             credencial = ConfiguracaoOrigem.de_ambiente()
+            conferir_conta_do_tenant(conexao, args.tenant, credencial)
             configuracao = configuracao_do_tenant(conexao, args.tenant, os.environ)
         except (SemConfiguracao, ValueError) as erro:
             # Só a classe: a mensagem de configuração pode citar a variável que falta, nunca o valor.
@@ -1331,7 +1356,9 @@ def main():
                 log.error("pedido %s foi fechado pelo controlador durante a carga; a carga para aqui", args.pedido)
                 sys.exit(1)
             acompanhamento.concluir(f"carga interrompida: {type(erro).__name__}")
-            raise
+            # O log do Actions é público: o traceback do banco pode trazer a linha recusada com dado do cliente.
+            log.error("carga interrompida: %s", type(erro).__name__)
+            sys.exit(1)
         repositorio.limpar_eventos_processados(args.tenant, "erp")
         acompanhamento.concluir(resumo_do_pedido(relatorio))
     print(relatorio.texto())

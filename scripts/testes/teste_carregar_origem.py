@@ -6,6 +6,7 @@ import unittest
 import urllib.parse
 import uuid
 from collections import Counter
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,6 +22,18 @@ from cliente_origem import ClienteOrigem, ConfiguracaoOrigem  # noqa: E402
 
 for nome in ("cliente_origem", "carregar_origem"):
     logging.getLogger(nome).addHandler(logging.NullHandler())
+
+class TesteContaDaCredencial(unittest.TestCase):
+    def test_conta_vem_do_ultimo_trecho_da_url_ou_do_tenant_oauth(self):
+        from carregar_origem import conta_da_credencial
+
+        basica = ConfiguracaoOrigem(url_base="https://api.sienge.com.br/shoppingdesign")
+        self.assertEqual(conta_da_credencial(basica), "shoppingdesign")
+        self.assertEqual(conta_da_credencial(replace(basica, url_base="https://api.sienge.com.br/RsBarreto/")), "rsbarreto")
+        self.assertEqual(conta_da_credencial(replace(basica, url_base="https://api.sienge.com.br")), "")
+        oauth = ConfiguracaoOrigem(url_base="https://api.sienge.com.br", autenticacao="oauth", tenant_oauth="verg")
+        self.assertEqual(conta_da_credencial(oauth), "verg")
+
 
 HOJE = date(2026, 9, 28)
 TENANT = "0e000000-0000-4000-8000-0000000000e1"

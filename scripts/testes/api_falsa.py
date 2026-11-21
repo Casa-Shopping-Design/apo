@@ -80,9 +80,13 @@ class ApiFalsa:
         corpo = manipulador.rfile.read(tamanho).decode() if tamanho else ""
         autorizacao = manipulador.headers.get("Authorization", "")
         tipo, caminho = None, partes.path
-        for prefixo, nome in PREFIXOS:
-            if partes.path.startswith(prefixo):
-                tipo, caminho = nome, partes.path[len(prefixo):]
+        # A URL real leva a conta do cliente antes do prefixo (/<conta>/public/api/v1/...); a falsa aceita as duas.
+        segmentos = partes.path.split("/", 2)
+        candidatos = [partes.path] + (["/" + segmentos[2]] if len(segmentos) == 3 else [])
+        for candidato in candidatos:
+            prefixo_achado = next(((p, n) for p, n in PREFIXOS if candidato.startswith(p)), None)
+            if prefixo_achado:
+                tipo, caminho = prefixo_achado[1], candidato[len(prefixo_achado[0]):]
                 break
         with self._trava:
             self.requisicoes.append({"metodo": metodo, "tipo": tipo, "caminho": caminho, "consulta": consulta})

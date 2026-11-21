@@ -162,8 +162,22 @@ def main(argumentos=None):
         gravar_saida_github(resultado)
         if args.local:
             resultado["execucoes"] = executar_local(conexao, resultado["admitidos"])
-    print(json.dumps(resultado, ensure_ascii=False))
+    print(json.dumps(resumo_para_log(resultado), ensure_ascii=False))
     return 0
+
+
+def resumo_para_log(resultado):
+    """O log do Actions é público: sai o número de cada pedido, nunca o tenant nem o Environment do cliente.
+
+    O job da carga recebe a lista completa pelo GITHUB_OUTPUT, que não aparece no log.
+    """
+    resumo = {chave: valor for chave, valor in resultado.items() if chave not in ("admitidos", "execucoes")}
+    resumo["admitidos"] = [admitido["pedido"] for admitido in resultado.get("admitidos", [])]
+    if "execucoes" in resultado:
+        resumo["execucoes"] = [{"pedido": e["pedido"], "codigos": e["codigos"],
+                                "fechado_pelo_controlador": e["fechado_pelo_controlador"]}
+                               for e in resultado["execucoes"]]
+    return resumo
 
 
 if __name__ == "__main__":
