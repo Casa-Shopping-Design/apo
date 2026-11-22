@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { NextRequest, NextResponse } from "next/server";
-import { lerConfiguracaoSupabase } from "./configuracao";
+import { lerConfiguracaoSupabase, opcoesCookieSessao } from "./configuracao";
 import { perfilOperador, sessaoExigeSegundoFator } from "./nivel-acesso";
 
 type CookieRenovado = { name: string; value: string; options: Parameters<NextResponse["cookies"]["set"]>[2] };
@@ -91,6 +91,7 @@ export async function renovarSessao(request: NextRequest): Promise<SessaoRenovad
   };
 
   const supabase = createServerClient(url, chavePublica, {
+    cookieOptions: opcoesCookieSessao,
     cookies: {
       getAll: () => request.cookies.getAll(),
       setAll(cookiesParaGravar, cabecalhos) {
