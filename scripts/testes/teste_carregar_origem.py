@@ -320,6 +320,17 @@ class TesteCarga(unittest.TestCase):
         self.assertEqual(repo.contagem()["income"], 0)
         self.assertEqual(repo.recargas, 1)
 
+    def test_429_com_espera_longa_fecha_a_carga_com_o_que_ja_veio(self):
+        origem, repo = Origem(), RepositorioFalso()
+        with ApiFalsa(rest=origem.rest(), bulk=origem.bulk(), bulk_indisponivel=True,
+                      falhas_429={"accounts-statements": 99}, retry_after="83122") as api:
+            relatorio = executar(cliente_para(api), repo, TENANT, HOJE, **OPCOES)
+            self.assertEqual(len(api.chamadas("rest", "accounts-statements")), 1)
+        self.assertTrue(relatorio.cota_esgotada)
+        self.assertNotIn((TENANT, "accounts-statements"), repo.marcas)
+        self.assertIn((TENANT, "units"), repo.marcas)
+        self.assertEqual(repo.recargas, 1)
+
     def test_cota_curta_nao_deixa_a_mesma_tarefa_sem_carga_para_sempre(self):
         origem, repo = Origem(), RepositorioFalso()
         so_bulk = [tarefa.endpoint for tarefa in PLANO_BULK if tarefa not in PLANO_COMUM]

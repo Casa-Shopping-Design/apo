@@ -85,6 +85,9 @@ class ConfiguracaoOrigem:
     timeout_segundos: float = 60
     tentativas: int = 5
     espera_maxima_async_segundos: float = 1800
+    # Em 22/11/2026 o ERP devolveu 429 com Retry-After de 83122 s (quase 23 horas) e a carga dormiu até o
+    # job morrer por tempo, com a transação aberta. Espera maior que esta conta como cota esgotada.
+    espera_maxima_retry_segundos: float = 300
     tamanho_chunk_kb: int = 4096
 
     @classmethod
@@ -199,6 +202,11 @@ class ClienteOrigem:
                 self._anotar(tipo, metodo, url, erro.code, inicio, len(texto), tentativa, "HTTPError")
                 if erro.code == 429 or (erro.code >= 500 and repetir_5xx):
                     espera = _espera_retry_after(erro.headers.get("Retry-After"), tentativa)
+                    if espera > self.config.espera_maxima_retry_segundos:
+                        log.warning("%s em %s pedindo %.0f s de espera; a carga para aqui", erro.code, caminho, espera)
+                        if erro.code == 429:
+                            raise CotaEsgotada(erro.code, caminho, f"origem pediu {espera:.0f} s de espera") from None
+                        raise ErroOrigem(erro.code, caminho) from None
                     log.warning("%s em %s, nova tentativa em %.0f s", erro.code, caminho, espera)
                     self.dormir(espera)
                     continue
