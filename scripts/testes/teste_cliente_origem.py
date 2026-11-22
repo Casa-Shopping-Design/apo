@@ -62,6 +62,22 @@ class TesteCliente(unittest.TestCase):
             list(cliente.listar("units"))
         self.assertEqual(dormir.esperas, [2.0, 4.0, 8.0])
 
+    def test_429_com_espera_de_horas_vira_cota_esgotada_sem_dormir(self):
+        dormir = DormirFalso()
+        with ApiFalsa(rest={"units": unidades(1)}, falhas_429={"units": 99}, retry_after="83122") as api:
+            cliente = ClienteOrigem(configurar(api), dormir=dormir)
+            with self.assertRaises(CotaEsgotada):
+                list(cliente.listar("units"))
+            self.assertEqual(len(api.chamadas("rest", "units")), 1)
+        self.assertEqual(dormir.esperas, [])
+
+    def test_429_com_espera_no_teto_ainda_espera(self):
+        dormir = DormirFalso()
+        with ApiFalsa(rest={"units": unidades(1)}, falhas_429={"units": 1}, retry_after="300") as api:
+            cliente = ClienteOrigem(configurar(api), dormir=dormir)
+            list(cliente.listar("units"))
+        self.assertEqual(dormir.esperas, [300.0])
+
     def test_429_insistente_desiste_com_erro(self):
         with ApiFalsa(rest={"units": unidades(1)}, falhas_429={"units": 99}) as api:
             cliente = ClienteOrigem(configurar(api, tentativas=3), dormir=DormirFalso())
