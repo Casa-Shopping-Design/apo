@@ -21,7 +21,13 @@ Se os subdomínios fossem ligados hoje no mesmo projeto, um usuário da construt
 | `<cliente>.apotecs.com.br` | Painel de cada cliente | Projeto de produção na Vercel e projeto de produção em `sa-east-1` |
 | `apotecs.com.br` e `www` | Página institucional ou tela que pergunta o cliente e manda para o subdomínio | Projeto de produção, ou um projeto só de site |
 
-O subdomínio guarda só letras minúsculas, dígitos e hífen, de 3 a 30 caracteres, começando por letra. Ficam reservados e nenhum cliente recebe: `www`, `app`, `api`, `admin`, `demo`, `status`, `suporte`, `ajuda`, `mail`, `email`, `entrar`, `login`, `teste`, `staging`, `preview`, além de qualquer nome começando por `_`.
+O subdomínio guarda só letras minúsculas, dígitos e hífen, de 3 a 30 caracteres, começando por letra e sem terminar em hífen. Hífen duplo também fica de fora, porque abre o prefixo `xn--`, que o navegador mostra como nome acentuado e serve para imitar outro cliente. Ficam reservados e nenhum cliente recebe:
+
+- da plataforma: `www`, `app`, `api`, `admin`, `demo`, `status`, `suporte`, `ajuda`, `entrar`, `login`, `teste`, `staging`, `preview`, `dev`, `test`, `prod`, `producao`, `homolog`, `cdn`, `static`, `docs`, `blog`;
+- de e-mail e DNS: `mail`, `email`, `mta-sts`, `autodiscover`, `autoconfig`, `smtp`, `imap`, `pop`, `webmail`, `ftp`, `ns1`, `ns2`;
+- que se passariam pela plataforma: `apo`, `apotecs`, `painel`, `portal`, `auth`, `sso`, `conta`, `seguranca`, `support`, `help`, `sistema`.
+
+A regra mora na migration 0056, e o teste `supabase/tests/subdominio_tenant.sql` confere a lista inteira. O JWT só carrega o subdomínio novo depois da renovação do token, em até uma hora. Por isso, subdomínio de cliente que saiu não é dado a outro cliente no mesmo dia.
 
 ## DNS
 
