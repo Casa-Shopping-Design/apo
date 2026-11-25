@@ -30,7 +30,7 @@ describe("decidirDestino sem usuário", () => {
     expect(decidirDestino({ ...diretor, usuarioId: null, caminho: caminhosAcesso.verificar })).toBe("entrar");
   });
 
-  it.each(["/entrar", "/sair", "/manutencao", "/api/saude", "/api/origem/eventos"])("deixa %s passar", (caminho) => {
+  it.each(["/entrar", "/sair", "/manutencao", "/api/saude", "/api/origem/eventos", "/esqueci-senha", "/auth/confirmar"])("deixa %s passar", (caminho) => {
     expect(decidirDestino({ ...diretor, usuarioId: null, perfil: null, aal: null, caminho })).toBe("liberado");
   });
 });

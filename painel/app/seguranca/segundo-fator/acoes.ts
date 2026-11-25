@@ -1,9 +1,11 @@
 "use server";
 
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { registrarEventoSessao } from "@/lib/auditoria";
 import { mensagens } from "@/lib/mensagens";
 import { comRegistroAcao, lerContextoRequisicao, rotaAcao, type ContextoRequisicao } from "@/lib/registro-requisicao";
+import { cookieDefinirSenha, destinoDepoisDoSegundoFator } from "@/lib/senha";
 import { caminhosAcesso } from "@/lib/supabase/nivel-acesso";
 import { criarClienteServidor } from "@/lib/supabase/servidor";
 
@@ -21,6 +23,11 @@ const formatoCodigo = /^\d{6}$/;
 
 type ErroAuth = { code?: string; status?: number } | null;
 type ClienteServidor = Awaited<ReturnType<typeof criarClienteServidor>>;
+
+// Quem veio do link de senha do e-mail volta para a tela de senha; os demais vão ao painel.
+async function destinoDepoisDaConfirmacao(): Promise<string> {
+  return destinoDepoisDoSegundoFator((await cookies()).get(cookieDefinirSenha)?.value);
+}
 
 function traduzirErro(erro: ErroAuth): string {
   if (!erro) return mensagens.segundoFator.indisponivel;
@@ -136,7 +143,7 @@ async function confirmarCadastro(
   }
 
   await registrarEventoSessao(supabase, "segundo_fator_cadastrado", contexto.ip, contexto.idRequisicao);
-  redirect("/");
+  redirect(await destinoDepoisDaConfirmacao());
 }
 
 export async function verificarSegundoFator(_estadoAnterior: EstadoVerificacao, formulario: FormData): Promise<EstadoVerificacao> {
@@ -161,6 +168,6 @@ export async function verificarSegundoFator(_estadoAnterior: EstadoVerificacao, 
       return { erro: traduzirErro(verificacao.error) };
     }
 
-    redirect("/");
+    redirect(await destinoDepoisDaConfirmacao());
   });
 }
