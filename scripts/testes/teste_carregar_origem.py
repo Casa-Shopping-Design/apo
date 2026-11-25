@@ -119,6 +119,8 @@ class RepositorioFalso:
     def __init__(self, obras=(101,)):
         self.raw = {}
         self.marcas = {}
+        self.retomadas = {}
+        self.sub_recursos = {}
         self.modo = None
         self.obras = list(obras)
         self.recargas = 0
@@ -150,9 +152,27 @@ class RepositorioFalso:
                 del raw[(t, endpoint, hash_atual)]
                 substituidos[endpoint] += 1
         self.raw = raw
-        self.marcas[(tenant, lote.tarefa.endpoint)] = nova_marca
+        if lote.parcial and lote.retomada is not None:
+            self.retomadas[(tenant, lote.tarefa.endpoint)] = lote.retomada
+        elif not lote.parcial:
+            self.marcas[(tenant, lote.tarefa.endpoint)] = nova_marca
+            self.retomadas.pop((tenant, lote.tarefa.endpoint), None)
         return {e: {"lidos": lote.lidos[e], "novos": novos[e], "substituidos": substituidos[e]}
                 for e in set(lote.lidos) | set(substituidos)}
+
+    def ler_retomadas(self, tenant):
+        return {e: r for (t, e), r in self.retomadas.items() if t == tenant}
+
+    def ler_sub_recursos(self, tenant):
+        return {s: replace(estado) for (t, s), estado in self.sub_recursos.items() if t == tenant}
+
+    def gravar_sub_recurso(self, tenant, sub_recurso, estado):
+        self.sub_recursos[(tenant, sub_recurso)] = replace(estado)
+
+    def ler_sem_sub_recurso(self, tenant, endpoint, sub_recurso):
+        com_grupo = {chave for (t, e, _), (chave, _) in self.raw.items() if t == tenant and e == sub_recurso}
+        return {int(chave) for (t, e, _), (chave, _) in self.raw.items()
+                if t == tenant and e == endpoint and chave not in com_grupo}
 
     def ler_empresas_contabeis(self, tenant):
         return {p.get("companyId") for (t, e, _), (_, p) in self.raw.items() if t == tenant and e == "trial-balance"}

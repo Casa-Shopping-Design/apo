@@ -111,6 +111,25 @@ Para a carga dos dias 1 e 15, rode o cadastro com `--modo-carga agendado --horar
 
 Cota esgotada: o ERP devolve 429 com Retry-After, e a carga termina como "cota diária esgotada" sem dormir com a transação aberta. O raw do que já veio fica gravado. Na carga seguinte, o carregador põe na frente as tarefas que ficaram sem carga, então um pacote pequeno completa a base em alguns dias.
 
+Títulos a pagar com cota curta: a tarefa `bills` grava os títulos que leu por inteiro e guarda o ponto em `app.carga_retomada`. O pedido termina com "cota diária esgotada; bills: N de T títulos lidos no ciclo", e o pedido seguinte continua do ponto (ADR 0025). Na primeira carga o a pagar só aparece no painel quando o último título é lido. As parcelas a receber e o balancete também gravam o que leram e continuam no pedido seguinte; o a receber não deixa linha em `app.carga_retomada`, porque o próprio raw diz quais títulos já vieram. Para ver onde as outras duas estão (no balancete o código é empresa × 1.000.000 + aaaamm):
+
+```sql
+select endpoint, iniciada_em, ultimo_id_origem, atualizado_em from app.carga_retomada where tenant_id = '<tenant>';
+```
+
+Rateio de obra suspenso: depois de 30 títulos seguidos sem apropriação de obra, a carga para de pedir `bills/{id}/buildings-cost` e avisa no relatório. A cada 30 dias ela confere 5 títulos por conta própria. Para voltar a pedir antes disso, apague a linha; as cargas seguintes releem só o rateio dos títulos que ficaram sem ele, uma chamada por título:
+
+```sql
+delete from app.sub_recurso_origem where tenant_id = '<tenant>' and sub_recurso = 'bills/buildings-cost';
+```
+
+Se a base tem obra e a suspensão foi engano, grave `presente` no lugar de apagar. A carga não suspende de novo sozinha:
+
+```sql
+insert into app.sub_recurso_origem (tenant_id, sub_recurso, situacao) values ('<tenant>', 'bills/buildings-cost', 'presente')
+on conflict (tenant_id, sub_recurso) do update set situacao = 'presente', atualizado_em = now();
+```
+
 Raw cheio e staging vazio: quase sempre é empreendimento fora dos tipos 1 e 2, ou `app.centro_custo` sem as obras. Compare os tipos em `raw.registro` do endpoint `enterprises` com as linhas de `app.centro_custo` do tenant.
 
 Pedido preso em `reservado`: o controlador expira pedido sem batimento há mais de 30 minutos na passagem seguinte. Antes de criar outro, confirme que a run antiga foi cancelada.

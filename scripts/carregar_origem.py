@@ -5,6 +5,9 @@ marca em app.marca_carga. Cada tarefa grava numa transação, e a marca avança 
 passa pela lista de campos permitidos antes de virar hash e payload, então dado pessoal não chega
 ao banco. No fim recarrega o staging do tenant.
 
+Títulos a pagar, parcelas a receber e balancete gravam em fatias. Quando a cota acaba, o que foi lido fica em
+raw, a execução seguinte lê só o que falta e a marca só avança no fim do ciclo (ADR 0025).
+
 Antes do plano, os IDs avisados pelo webhook (app.evento_origem) são reconsultados na API e os
 eventos saem da fila na mesma transação que grava o que veio. Fila vazia não muda nada.
 
@@ -45,6 +48,10 @@ from configuracao_origem import opcoes_de_ambiente as opcoes_so_do_ambiente  # n
 from pedido_carga import AcompanhamentoPedido, SemAcompanhamento  # noqa: E402
 from registro_execucao import RegistroExecucao  # noqa: E402
 from registro_requisicoes import RegistroRequisicoes, cota_restante  # noqa: E402
+from retomada_carga import (  # noqa: E402
+    DIAS_REVERIFICAR_SUB_RECURSO, FIM_DE_FATIA, VAZIOS_PARA_SUSPENDER, Retomada, SondagemSubRecurso, SubRecurso,
+    em_fatias,
+)
 
 log = logging.getLogger("carregar_origem")
 
@@ -52,6 +59,10 @@ RAIZ = Path(__file__).resolve().parent.parent
 TAMANHO_LOTE = 1000
 TITULOS_POR_CHAMADA = 100
 DATA_MINIMA = "2000-01-01"
+# Uma transação a cada tantos títulos: a queda no meio perde no máximo uma fatia, cerca de 2 minutos de chamadas
+# no limite de 200 por minuto.
+TITULOS_POR_FATIA = 200
+RATEIO_OBRA = "bills/buildings-cost"
 
 
 @dataclass(frozen=True)
@@ -161,6 +172,10 @@ class Contexto:
     titulos_receber: dict = field(default_factory=dict)
     concluidas: set = field(default_factory=set)
     compartilhado: dict = field(default_factory=dict)
+    retomadas: dict = field(default_factory=dict)
+    sondagens: dict = field(default_factory=dict)
+    titulos_sem_rateio: set = field(default_factory=set)
+    andamento: dict = field(default_factory=dict)
 
     def inicio_janela(self):
         return (self.hoje - timedelta(days=self.janela_dias)).isoformat()
@@ -266,49 +281,100 @@ def extrato(ctx, tarefa, marca):
             yield tarefa.endpoint, registro
 
 
-# O(t) chamadas por título alterado (parcelas e rateio): N+1 de rede, porque o caminho só REST
-# não tem consulta em lote. Roda de madrugada; o limite é a cota diária, não o banco.
-def titulos_rest(ctx, tarefa, marca):
-    """Sub-recurso vazio grava só o billId: o grupo do título é trocado inteiro e a parcela ou o rateio que
+def _sub_recurso_do_titulo(ctx, id_titulo, sub):
+    """Sub-recurso vazio vira só o billId: o grupo do título é trocado inteiro e a parcela ou o rateio que
     sumiu na origem sai de raw, em vez de ficar com a versão anterior."""
+    endpoint = f"bills/{sub}"
+    linhas = [(endpoint, {**item, "billId": id_titulo})
+              for itens in ctx.cliente.listar(f"bills/{id_titulo}/{sub}") for item in itens]
+    return linhas or [(endpoint, {"billId": id_titulo})], bool(linhas)
+
+
+def _rateio_do_titulo(ctx, id_titulo, rateio):
+    registros, veio_dado = _sub_recurso_do_titulo(ctx, id_titulo, "buildings-cost")
+    rateio.anotar(veio_dado)
+    return registros
+
+
+def _ler_titulo(ctx, id_titulo, rateio):
+    """Com o rateio suspenso nada é gravado no grupo dele: o título fica sem grupo em raw, e é por aí que a
+    releitura acha quem ficou sem rateio quando o sub-recurso volta."""
+    registros, _ = _sub_recurso_do_titulo(ctx, id_titulo, "installments")
+    if rateio.deve_pedir():
+        registros += _rateio_do_titulo(ctx, id_titulo, rateio)
+    return registros
+
+
+# O(p + t x s) chamadas: p páginas da lista, t títulos que faltam no ciclo, s sub-recursos pedidos (1 ou 2). Memória O(T).
+def titulos_rest(ctx, tarefa, marca):
+    """Títulos a pagar com parcelas e rateio de obra, um título por vez (o caminho só REST não tem lote).
+
+    A lista vem inteira e é percorrida em ordem crescente de código, a partir do último título gravado no
+    ciclo. Cada título só entra no fluxo depois de lido por inteiro (em_fatias).
+
+    Na primeira carga o cabeçalho de cada título só é gravado no fim, com a marca. O staging monta o a pagar
+    a partir do cabeçalho, e com parte dos títulos mostraria um total menor que o do ERP.
+    """
+    retomada = ctx.retomadas.get(tarefa.endpoint)
+    inicio_ciclo = retomada.iniciada_em if retomada else ctx.hoje
+    cursor = retomada.ultimo_id if retomada else 0
     if marca:
         recurso, parametros = "bills/by-change-date", {"startDate": marca.isoformat(), "endDate": ctx.hoje.isoformat()}
     else:
         recurso, parametros = "bills", {"startDate": ctx.inicio_janela(), "endDate": ctx.hoje.isoformat()}
+    titulos = {}
     for pagina in ctx.cliente.listar(recurso, parametros):
         for titulo in pagina:
-            ids = _inteiros(titulo.get("id"))
-            if not ids:
-                continue
-            id_titulo = ids[0]
-            yield "bills", titulo
-            for sub in ("installments", "buildings-cost"):
-                lidos = 0
-                for itens in ctx.cliente.listar(f"bills/{id_titulo}/{sub}"):
-                    for item in itens:
-                        lidos += 1
-                        yield f"bills/{sub}", {**item, "billId": id_titulo}
-                if not lidos:
-                    yield f"bills/{sub}", {"billId": id_titulo}
+            for id_titulo in _inteiros(titulo.get("id"))[:1]:
+                titulos[id_titulo] = titulo
+    rateio = ctx.sondagens.setdefault(RATEIO_OBRA, SondagemSubRecurso(None, ctx.hoje))
+    pendentes = sorted(id_titulo for id_titulo in titulos if id_titulo > cursor)
+    # Título já em raw sem grupo de rateio foi lido com o sub-recurso suspenso; com ele de volta, falta só o rateio.
+    so_rateio = sorted(ctx.titulos_sem_rateio - set(pendentes)) if marca else []
+    andamento = ctx.andamento[tarefa.endpoint] = {"lidos": len(titulos) - len(pendentes), "total": len(titulos),
+                                                  "unidade": "títulos"}
+
+    def trabalho():
+        yield from ((id_titulo, True) for id_titulo in pendentes)
+        for id_titulo in so_rateio:
+            if not rateio.deve_pedir():
+                return
+            yield id_titulo, False
+
+    def ler(unidade):
+        nonlocal cursor
+        id_titulo, com_parcelas = unidade
+        if not com_parcelas:
+            return _rateio_do_titulo(ctx, id_titulo, rateio)
+        registros = _ler_titulo(ctx, id_titulo, rateio)
+        cursor = id_titulo
+        andamento["lidos"] += 1
+        return ([("bills", titulos[id_titulo])] if marca else []) + registros
+
+    yield from em_fatias(trabalho(), ler, lambda: Retomada(inicio_ciclo, cursor), TITULOS_POR_FATIA)
+    if not marca:
+        for id_titulo in sorted(titulos):
+            yield "bills", titulos[id_titulo]
 
 
 DIAS_RODIZIO_RECEBER = 7
 
 
 def titulos_receber_da_noite(ctx, marca):
-    """Primeira carga lê todos os títulos a receber dos contratos. Nas seguintes, os que nunca foram lidos, os de
-    contrato alterado, os com recebimento no extrato, os avisados pelo webhook e um sétimo do resto em
-    rodízio, para nenhum ficar mais de uma semana sem conferir saldo e vencimento."""
+    """Títulos a receber da execução, na ordem em que a cota pode acabar. Primeiro os de contrato alterado, os
+    com recebimento no extrato e os avisados pelo webhook: o contrato alterado hoje não volta à lista amanhã.
+    Depois os que nunca foram lidos, que voltam enquanto não forem. Por último um sétimo do resto em rodízio,
+    para nenhum ficar mais de uma semana sem conferir saldo e vencimento. Sem marca o rodízio não entra, porque a
+    primeira carga ainda está lendo os nunca lidos."""
     compartilhado = ctx.compartilhado
-    alterados = (compartilhado.get("titulos_receber_alterados", set())
-                 | compartilhado.get("titulos_receber_movimentados", set())
-                 | compartilhado.get("titulos_receber_avisados", set()))
     todos = set(ctx.titulos_receber) | compartilhado.get("titulos_receber_alterados", set())
-    if not marca:
-        return sorted(todos)
+    com_motivo = todos & (compartilhado.get("titulos_receber_alterados", set())
+                          | compartilhado.get("titulos_receber_movimentados", set())
+                          | compartilhado.get("titulos_receber_avisados", set()))
+    nunca_lidos = {t for t in todos if not ctx.titulos_receber.get(t)} - com_motivo
     rodizio = ctx.hoje.toordinal() % DIAS_RODIZIO_RECEBER
-    return sorted(t for t in todos
-                  if not ctx.titulos_receber.get(t) or t in alterados or t % DIAS_RODIZIO_RECEBER == rodizio)
+    do_rodizio = {t for t in todos if t % DIAS_RODIZIO_RECEBER == rodizio} - com_motivo - nunca_lidos if marca else set()
+    return sorted(com_motivo) + sorted(nunca_lidos) + sorted(do_rodizio)
 
 
 # O(c/7 + a) chamadas por noite, uma por título a receber (c contratos, a alterados ou com recebimento no dia):
@@ -316,15 +382,21 @@ def titulos_receber_da_noite(ctx, marca):
 # faz c. Memória O(c) nos códigos de título.
 def parcelas_receber_rest(ctx, tarefa, marca):
     """Título lido sem parcela grava só o receivableBillId, para a parcela quitada que sumiu da resposta sair de raw.
-    O carregador acrescenta receivableBillId a cada parcela."""
-    for titulo in titulos_receber_da_noite(ctx, marca):
-        lidas = 0
-        for pagina in ctx.cliente.listar(f"{tarefa.recurso}/{titulo}/installments"):
-            for parcela_titulo in pagina:
-                lidas += 1
-                yield tarefa.endpoint, {**parcela_titulo, "receivableBillId": titulo}
-        if not lidas:
-            yield tarefa.endpoint, {"receivableBillId": titulo}
+    O carregador acrescenta receivableBillId a cada parcela.
+
+    A fatia não leva ponto de retomada: título lido tem grupo em raw, e é por ele que a execução seguinte sabe
+    quem ainda falta."""
+    titulos = titulos_receber_da_noite(ctx, marca)
+    andamento = ctx.andamento[tarefa.endpoint] = {"lidos": 0, "total": len(titulos), "unidade": "títulos"}
+
+    def ler(titulo):
+        parcelas = [(tarefa.endpoint, {**parcela_titulo, "receivableBillId": titulo})
+                    for pagina in ctx.cliente.listar(f"{tarefa.recurso}/{titulo}/installments")
+                    for parcela_titulo in pagina]
+        andamento["lidos"] += 1
+        return parcelas or [(tarefa.endpoint, {"receivableBillId": titulo})]
+
+    yield from em_fatias(titulos, ler, lambda: None, TITULOS_POR_FATIA)
 
 
 # O(o x (1 + s x p)) chamadas: o obras, s planilhas (unidades construtivas) por obra e p páginas de 200 itens.
@@ -445,12 +517,15 @@ def _fim_mes(mes):
     return _somar_meses(mes, 1) - timedelta(days=1)
 
 
-def meses_contabeis(ctx, marca, empresa):
+def meses_contabeis(ctx, marca, empresa, historico_inteiro=False):
     """Empresa que já tem balancete em raw revê os últimos meses a partir da marca (lançamento
-    retroativo em mês aberto); empresa nova, ou primeira carga, vem desde o início contábil."""
+    retroativo em mês aberto); empresa nova, ou primeira carga, vem desde o início contábil.
+
+    A empresa em que um ciclo interrompido parou pede o histórico inteiro: as fatias já gravadas a puseram em
+    raw, e pela regra de cima os meses antigos que faltam ficariam de fora."""
     atual = _inicio_mes(ctx.hoje)
     inicio = ctx.inicio_contabil or _inicio_mes(ctx.hoje - timedelta(days=ctx.janela_dias))
-    if marca and empresa in ctx.empresas_com_balancete:
+    if marca and empresa in ctx.empresas_com_balancete and not historico_inteiro:
         inicio = max(inicio, _somar_meses(_inicio_mes(marca), -(MESES_REVISAO_CONTABIL - 1)))
     meses = []
     while inicio <= atual:
@@ -463,36 +538,68 @@ def _rotulo_passagem(sem_zeramento):
     return "sem zeramento" if sem_zeramento else "com zeramento"
 
 
-# O(e x m x 2 x p) chamadas REST: e empresas, m meses, duas passagens e p páginas de 200 contas
-# (p perto de 3). Primeira carga de uma SPE com 42 meses: cerca de 250 chamadas; noite comum, com
-# 3 meses de revisão: cerca de 18 por empresa. Memória O(contas de uma passagem) para a checagem.
+# Uma transação a cada tantos meses de empresa: cerca de 180 chamadas, com duas passagens de três páginas.
+BALANCETES_POR_FATIA = 30
+FATOR_EMPRESA = 1_000_000
+
+
+def _codigo_balancete(empresa, mes):
+    """Empresa e mês num inteiro que cresce na ordem em que a tarefa percorre, para caber no ponto de retomada."""
+    return empresa * FATOR_EMPRESA + mes.year * 100 + mes.month
+
+
+def _balancete_do_mes(ctx, tarefa, empresa, mes):
+    registros = []
+    for sem_zeramento in PASSAGENS_BALANCETE:
+        parametros = {"companyId": empresa, "initialPeriod": mes.isoformat(),
+                      "finalPeriod": _fim_mes(mes).isoformat(),
+                      "desconsiderClosingBalance": "true" if sem_zeramento else "false",
+                      "reportType": "CORPORATE", "onlyAccountsWithMovements": "false",
+                      "thirdParties": "false"}
+        vistas = set()
+        for pagina in ctx.cliente.listar(tarefa.recurso, parametros):
+            contas = {r.get("account") for r in pagina if r.get("account") is not None}
+            if contas & vistas:
+                raise ErroOrigem(0, tarefa.recurso,
+                                 f"página repetida na empresa {empresa}, mês {mes:%Y-%m}, "
+                                 f"{_rotulo_passagem(sem_zeramento)}: a API não pagina pelo "
+                                 f"offset; o mês não foi gravado, confira com a sondagem")
+            vistas |= contas
+            registros += [(tarefa.endpoint, {"companyId": empresa, **registro, "initialPeriod": mes.isoformat(),
+                                             "desconsiderClosingBalance": sem_zeramento}) for registro in pagina]
+    return registros
+
+
+# O(e x m x 2 x p) chamadas REST: e empresas, m meses que faltam no ciclo, duas passagens e p páginas de 200
+# contas (p perto de 3). Primeira carga de uma SPE com 42 meses: cerca de 250 chamadas; noite comum, com
+# 3 meses de revisão: cerca de 18 por empresa. Memória O(contas de um mês, nas duas passagens).
 def balancete_mensal(ctx, tarefa, marca):
     """Balancete por empresa e mês, nas duas passagens (com e sem zeramento do resultado).
 
+    O mês de uma empresa só entra no fluxo com as duas passagens lidas, e o ponto de retomada guarda o último
+    que entrou (em_fatias). A execução seguinte pula o que vem antes dele na ordem de empresa e mês.
+
     A paginação do balancete não está documentada. Se a página seguinte repetir conta da anterior,
-    a API ignora o offset: a tarefa falha inteira, sem gravar, em vez de duplicar ou perder contas.
+    a API ignora o offset: a tarefa para nesse mês, sem gravá-lo, em vez de duplicar ou perder contas.
     """
+    retomada = ctx.retomadas.get(tarefa.endpoint)
+    inicio_ciclo = retomada.iniciada_em if retomada else ctx.hoje
+    cursor = retomada.ultimo_id if retomada else 0
     empresas = sorted(set(empresas_das_obras(ctx)) | set(ctx.empresas_contabeis))
-    for empresa in empresas:
-        for mes in meses_contabeis(ctx, marca, empresa):
-            for sem_zeramento in PASSAGENS_BALANCETE:
-                parametros = {"companyId": empresa, "initialPeriod": mes.isoformat(),
-                              "finalPeriod": _fim_mes(mes).isoformat(),
-                              "desconsiderClosingBalance": "true" if sem_zeramento else "false",
-                              "reportType": "CORPORATE", "onlyAccountsWithMovements": "false",
-                              "thirdParties": "false"}
-                vistas = set()
-                for pagina in ctx.cliente.listar(tarefa.recurso, parametros):
-                    contas = {r.get("account") for r in pagina if r.get("account") is not None}
-                    if contas & vistas:
-                        raise ErroOrigem(0, tarefa.recurso,
-                                         f"página repetida na empresa {empresa}, mês {mes:%Y-%m}, "
-                                         f"{_rotulo_passagem(sem_zeramento)}: a API não pagina pelo "
-                                         f"offset; nada foi gravado, confira com a sondagem")
-                    vistas |= contas
-                    for registro in pagina:
-                        yield tarefa.endpoint, {"companyId": empresa, **registro, "initialPeriod": mes.isoformat(),
-                                                "desconsiderClosingBalance": sem_zeramento}
+    unidades = [(empresa, mes) for empresa in empresas
+                for mes in meses_contabeis(ctx, marca, empresa, historico_inteiro=empresa == cursor // FATOR_EMPRESA)]
+    pendentes = [unidade for unidade in unidades if _codigo_balancete(*unidade) > cursor]
+    andamento = ctx.andamento[tarefa.endpoint] = {"lidos": len(unidades) - len(pendentes), "total": len(unidades),
+                                                  "unidade": "balancetes mensais"}
+
+    def ler(unidade):
+        nonlocal cursor
+        registros = _balancete_do_mes(ctx, tarefa, *unidade)
+        cursor = _codigo_balancete(*unidade)
+        andamento["lidos"] += 1
+        return registros
+
+    yield from em_fatias(pendentes, ler, lambda: Retomada(inicio_ciclo, cursor), BALANCETES_POR_FATIA)
 
 
 ESTRATEGIAS = {
@@ -542,6 +649,9 @@ class LoteTarefa:
 
     vigentes[(endpoint, chave)] = hashes da versão atual. Chave única fica com a última versão
     lida na execução; chave de grupo acumula todas as linhas do grupo.
+
+    A leitura para no fim de fatia que a estratégia emitir: `parcial` fica ligado, `retomada` guarda o ponto
+    que veio junto (quando veio) e o lote seguinte continua da mesma fonte.
     """
 
     def __init__(self, tarefa, fonte):
@@ -549,10 +659,15 @@ class LoteTarefa:
         self.fonte = fonte
         self.vigentes = {}
         self.lidos = Counter()
+        self.parcial = False
+        self.retomada = None
 
     # O(n) em registros; memória O(n) só das chaves e hashes, não dos payloads.
     def registros(self):
         for endpoint, bruto in self.fonte:
+            if endpoint is FIM_DE_FATIA:
+                self.parcial, self.retomada = True, bruto
+                return
             payload = filtrar(endpoint, bruto)
             hash_atual = hash_registro(payload)
             chave = chave_origem(endpoint, payload)
@@ -621,6 +736,41 @@ class RepositorioBanco:
                     titulos[int(chave)] = True
         return titulos
 
+    def ler_retomadas(self, tenant):
+        with self.conexao.cursor() as cur:
+            cur.execute("select endpoint, iniciada_em, ultimo_id_origem from app.carga_retomada where tenant_id = %s",
+                        (tenant,))
+            return {endpoint: Retomada(iniciada_em, ultimo_id) for endpoint, iniciada_em, ultimo_id in cur.fetchall()}
+
+    def ler_sub_recursos(self, tenant):
+        with self.conexao.cursor() as cur:
+            cur.execute("select sub_recurso, situacao, vazios_seguidos, verificado_em from app.sub_recurso_origem "
+                        "where tenant_id = %s", (tenant,))
+            return {nome: SubRecurso(*estado) for nome, *estado in cur.fetchall()}
+
+    def ler_sem_sub_recurso(self, tenant, endpoint, sub_recurso):
+        """Códigos em raw no endpoint que não têm nenhuma linha no grupo do sub-recurso. Uma consulta por
+        execução, O(n) nos registros do endpoint; os dois lados usam o índice (tenant_id, endpoint, chave_origem)."""
+        with self.conexao.cursor() as cur:
+            cur.execute(
+                "select distinct r.chave_origem::int from raw.registro r "
+                "where r.tenant_id = %s and r.endpoint = %s and r.chave_origem ~ '^\\d{1,9}$' "
+                "and not exists (select 1 from raw.registro s where s.tenant_id = r.tenant_id "
+                "and s.endpoint = %s and s.chave_origem = r.chave_origem)",
+                (tenant, endpoint, sub_recurso),
+            )
+            return {codigo for (codigo,) in cur.fetchall()}
+
+    def gravar_sub_recurso(self, tenant, sub_recurso, estado):
+        with self.conexao.transaction(), self.conexao.cursor() as cur:
+            cur.execute(
+                "insert into app.sub_recurso_origem (tenant_id, sub_recurso, situacao, vazios_seguidos, verificado_em) "
+                "values (%s, %s, %s, %s, %s) on conflict (tenant_id, sub_recurso) do update "
+                "set situacao = excluded.situacao, vazios_seguidos = excluded.vazios_seguidos, "
+                "verificado_em = excluded.verificado_em, atualizado_em = now()",
+                (tenant, sub_recurso, estado.situacao, estado.vazios_seguidos, estado.verificado_em),
+            )
+
     def consumo_do_dia(self, tenant):
         """Chamadas de saída já feitas hoje (dia de São Paulo), por sistema; desconta da cota desta execução."""
         with self.conexao.cursor() as cur:
@@ -684,14 +834,28 @@ class RepositorioBanco:
         return novos, substituidos
 
     def gravar_tarefa(self, tenant, lote, nova_marca):
+        """O lote parcial deixa a marca como está e grava o ponto de retomada, se a estratégia mandou um; o que
+        chegou ao fim avança a marca e apaga o ponto. Tudo na transação dos registros, para o ponto nunca passar
+        do que está em raw."""
         with self.conexao.transaction(), self.conexao.cursor() as cur:
             novos, substituidos = self._gravar_registros(cur, tenant, lote)
-            cur.execute(
-                "insert into app.marca_carga (tenant_id, endpoint, ultima_referencia) values (%s, %s, %s) "
-                "on conflict (tenant_id, endpoint) do update "
-                "set ultima_referencia = excluded.ultima_referencia, atualizado_em = now()",
-                (tenant, lote.tarefa.endpoint, nova_marca),
-            )
+            if lote.parcial and lote.retomada is not None:
+                cur.execute(
+                    "insert into app.carga_retomada (tenant_id, endpoint, iniciada_em, ultimo_id_origem) "
+                    "values (%s, %s, %s, %s) on conflict (tenant_id, endpoint) do update "
+                    "set iniciada_em = excluded.iniciada_em, ultimo_id_origem = excluded.ultimo_id_origem, "
+                    "atualizado_em = now()",
+                    (tenant, lote.tarefa.endpoint, lote.retomada.iniciada_em, lote.retomada.ultimo_id),
+                )
+            elif not lote.parcial:
+                cur.execute(
+                    "insert into app.marca_carga (tenant_id, endpoint, ultima_referencia) values (%s, %s, %s) "
+                    "on conflict (tenant_id, endpoint) do update "
+                    "set ultima_referencia = excluded.ultima_referencia, atualizado_em = now()",
+                    (tenant, lote.tarefa.endpoint, nova_marca),
+                )
+                cur.execute("delete from app.carga_retomada where tenant_id = %s and endpoint = %s",
+                            (tenant, lote.tarefa.endpoint))
         return {e: {"lidos": lote.lidos[e], "novos": novos[e], "substituidos": substituidos[e]}
                 for e in set(lote.lidos) | set(substituidos)}
 
@@ -809,6 +973,8 @@ class Relatorio:
     chamadas: dict = field(default_factory=dict)
     fila: dict = field(default_factory=dict)
     obras: dict = field(default_factory=dict)
+    andamento: list = field(default_factory=list)
+    avisos: list = field(default_factory=list)
 
     def texto(self):
         saida = [f"caminho: {self.caminho}"]
@@ -824,6 +990,7 @@ class Relatorio:
                              f"{n['substituidos']} substituidos, {n['removidos']} removidos")
         for endpoint, n in sorted(self.linhas, key=lambda linha: linha[0]):
             saida.append(f"{endpoint}: {n['lidos']} lidos, {n['novos']} novos, {n['substituidos']} substituidos")
+        saida += self.andamento + self.avisos
         saida += [f"falhou: {endpoint} ({motivo})" for endpoint, motivo in self.falhas]
         saida.append(f"chamadas: {self.chamadas.get('rest', 0)} REST, {self.chamadas.get('bulk', 0)} Bulk")
         if self.cota_esgotada:
@@ -1173,6 +1340,48 @@ def _sem_obras(tarefa, ctx, relatorio):
     return True
 
 
+def gravar_em_fatias(repositorio, tenant, tarefa, fonte, nova_marca, contagens):
+    """Uma transação por fatia da estratégia; a que não emite fim de fatia grava tudo numa só.
+    As contagens somam em `contagens`, que fica com o que já foi gravado quando uma fatia adiante falha."""
+    while True:
+        lote = LoteTarefa(tarefa, fonte)
+        for endpoint, n in repositorio.gravar_tarefa(tenant, lote, nova_marca).items():
+            soma = contagens.setdefault(endpoint, {"lidos": 0, "novos": 0, "substituidos": 0})
+            for chave in soma:
+                soma[chave] += n[chave]
+        if not lote.parcial:
+            return
+
+
+AVISO_SUSPENSO = (f"suspenso depois de {VAZIOS_PARA_SUSPENDER} títulos seguidos sem ele; a carga confere de novo em "
+                  f"{DIAS_REVERIFICAR_SUB_RECURSO} dias (para voltar antes, ver docs/operacao/cliente-novo.md)")
+AVISO_VOLTOU = "a base passou a usar; os títulos lidos sem ele são relidos nas próximas execuções"
+
+
+def gravar_sondagens(ctx, repositorio, tenant, relatorio):
+    """A contagem vai ao banco fora da transação dos registros: perdida numa queda, a carga conta de novo."""
+    for sub_recurso, sondagem in ctx.sondagens.items():
+        if not sondagem.mudou():
+            continue
+        try:
+            repositorio.gravar_sub_recurso(tenant, sub_recurso, sondagem.estado)
+        except Exception as erro:
+            log.error("situação de %s não gravada: %s", sub_recurso, type(erro).__name__)
+            relatorio.falhas.append((sub_recurso, type(erro).__name__))
+            continue
+        if sondagem.suspendeu():
+            relatorio.avisos.append(f"{sub_recurso}: {AVISO_SUSPENSO}")
+        elif sondagem.voltou():
+            relatorio.avisos.append(f"{sub_recurso}: {AVISO_VOLTOU}")
+
+
+def anotar_andamento(ctx, relatorio):
+    for endpoint, n in sorted(ctx.andamento.items()):
+        if endpoint not in ctx.concluidas:
+            relatorio.andamento.append(f"{endpoint}: {n['lidos']} de {n['total']} {n['unidade']} lidos no ciclo; "
+                                       "continua na próxima execução")
+
+
 # O(T) tarefas; cada tarefa é O(n) nos registros dela.
 def executar(cliente, repositorio, tenant, hoje, **opcoes):
     reverificar_dias = opcoes.pop("reverificar_bulk_dias", 30)
@@ -1190,6 +1399,11 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
     ctx = Contexto(cliente=cliente, hoje=hoje, obras=obras, **opcoes)
     ctx.empresas_com_balancete = repositorio.ler_empresas_contabeis(tenant)
     ctx.titulos_receber = repositorio.ler_titulos_receber(tenant)
+    ctx.retomadas = repositorio.ler_retomadas(tenant)
+    ctx.sondagens = {nome: SondagemSubRecurso(estado, hoje)
+                     for nome, estado in repositorio.ler_sub_recursos(tenant).items()}
+    if ctx.sondagens.get(RATEIO_OBRA) is None or ctx.sondagens[RATEIO_OBRA].deve_pedir():
+        ctx.titulos_sem_rateio = repositorio.ler_sem_sub_recurso(tenant, "bills", RATEIO_OBRA)
     usar_bulk = _usar_bulk(modo, hoje, reverificar_dias)
     relatorio = Relatorio(caminho="bulk" if usar_bulk else "so_rest")
     plano = PLANO_BULK if usar_bulk else PLANO_SO_REST
@@ -1214,9 +1428,12 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
             continue
         tentadas.add(tarefa.endpoint)
         acompanhamento.etapa(tarefa.endpoint, len(fila) + 1)
+        contagens = {}
+        retomada = ctx.retomadas.get(tarefa.endpoint)
         try:
-            lote = LoteTarefa(tarefa, ESTRATEGIAS[tarefa.estrategia](ctx, tarefa, marcas.get(tarefa.endpoint)))
-            contagens = repositorio.gravar_tarefa(tenant, lote, hoje)
+            fonte = ESTRATEGIAS[tarefa.estrategia](ctx, tarefa, marcas.get(tarefa.endpoint))
+            # O ciclo que atravessou dias fecha com a marca do dia em que começou.
+            gravar_em_fatias(repositorio, tenant, tarefa, fonte, retomada.iniciada_em if retomada else hoje, contagens)
         except BulkIndisponivel:
             log.warning("Bulk indisponível para o tenant; seguindo pelo caminho só REST")
             repositorio.gravar_modo(tenant, True)
@@ -1228,7 +1445,9 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
             relatorio.cota_esgotada = True
             relatorio.falhas.append((tarefa.endpoint, "cota diária"))
             marca = marcas.get(tarefa.endpoint)
-            if marca is None or (hoje - marca).days >= 2:
+            if contagens:
+                log.info("%s parou na cota com o que leu gravado; continua na próxima execução", tarefa.endpoint)
+            elif marca is None or (hoje - marca).days >= 2:
                 # Sem carga há mais de um dia: a cota configurada não cabe no plano do tenant.
                 log.warning("%s sem carga desde %s por cota diária; confira ORIGEM_COTA_DIARIA e "
                             "ORIGEM_COTA_DIARIA_BULK contra o pacote do cliente",
@@ -1250,6 +1469,8 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
             continue
         finally:
             # Vale também para os continue e break de cima: a tarefa conta como passada e o buffer vai ao banco.
+            # As contagens entram mesmo na falha: fatia gravada antes dela continua em raw.
+            relatorio.linhas.extend(contagens.items())
             gravar_requisicoes()
             acompanhamento.tarefa_concluida()
         ctx.concluidas.add(tarefa.endpoint)
@@ -1259,7 +1480,8 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
                 break
         if tarefa in PLANO_BULK and tarefa not in PLANO_SO_REST:
             bulk_respondeu = True
-        relatorio.linhas.extend(contagens.items())
+    gravar_sondagens(ctx, repositorio, tenant, relatorio)
+    anotar_andamento(ctx, relatorio)
     if usar_bulk and bulk_respondeu and modo and modo[0]:
         repositorio.gravar_modo(tenant, False)
     if fila_eventos is not None:
@@ -1281,7 +1503,7 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
 def resumo_do_pedido(relatorio):
     """Texto curto do fim do pedido: só nomes de etapas, nunca a mensagem da API nem do banco."""
     if relatorio.cota_esgotada:
-        return "cota diária esgotada"
+        return "; ".join(["cota diária esgotada"] + relatorio.andamento)[:200]
     if relatorio.falhas:
         return ("falhou em: " + ", ".join(sorted({endpoint for endpoint, _ in relatorio.falhas})))[:200]
     return None
