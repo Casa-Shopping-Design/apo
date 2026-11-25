@@ -1,12 +1,13 @@
 -- Carga que não cabe na cota de um dia (ADR 0025). Com 100 chamadas REST por dia, a tarefa dos títulos a pagar
--- era desfeita inteira quando a cota acabava e recomeçava do zero no dia seguinte. As duas tabelas guardam o que
--- a carga precisa para continuar de onde parou. Como app.marca_carga, só o carregador lê e grava, pela conexão
--- do dono do banco.
+-- era desfeita inteira quando a cota acabava e recomeçava do zero no dia seguinte; o balancete, do mesmo jeito.
+-- As duas tabelas guardam o que a carga precisa para continuar de onde parou. Como app.marca_carga, só o
+-- carregador lê e grava, pela conexão do dono do banco.
 
 -- Ponto em que a tarefa parou. A linha nasce na transação que grava a fatia de registros em raw, então nunca
 -- fica à frente do que foi gravado, e some na transação que avança a marca. iniciada_em é o dia em que o ciclo
 -- começou e vira a marca quando ele termina: o que mudou na origem durante o ciclo entra no ciclo seguinte.
--- ultimo_id_origem é o último código lido por inteiro, na ordem crescente em que a tarefa percorre a lista.
+-- ultimo_id_origem é o último código lido por inteiro, na ordem crescente em que a tarefa percorre a lista:
+-- o código do título a pagar, ou empresa e mês do balancete num número só (empresa * 1000000 + aaaamm).
 create table app.carga_retomada (
   tenant_id uuid not null references app.tenant(id) on delete cascade,
   endpoint text not null,

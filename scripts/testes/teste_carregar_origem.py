@@ -152,9 +152,9 @@ class RepositorioFalso:
                 del raw[(t, endpoint, hash_atual)]
                 substituidos[endpoint] += 1
         self.raw = raw
-        if lote.retomada is not None:
+        if lote.parcial and lote.retomada is not None:
             self.retomadas[(tenant, lote.tarefa.endpoint)] = lote.retomada
-        else:
+        elif not lote.parcial:
             self.marcas[(tenant, lote.tarefa.endpoint)] = nova_marca
             self.retomadas.pop((tenant, lote.tarefa.endpoint), None)
         return {e: {"lidos": lote.lidos[e], "novos": novos[e], "substituidos": substituidos[e]}
