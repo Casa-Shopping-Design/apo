@@ -132,8 +132,9 @@ class TesteRegistroNoBanco(unittest.TestCase):
             "select id_origem, nome, tipo_origem, sincronizado_em is not null from app.centro_custo "
             "where tenant_id = %s", (self.tenant,)).fetchall()
         self.assertEqual(obras, [(101, "Obra A", "1", True)])
-        por_endpoint = {e: linha for e, *linha in self.execucoes()}
-        self.assertEqual(por_endpoint["centros_custo"][:3], ["ok", 1, 1])
+        # Uma linha por passagem (empreendimentos, unidades e contratos); só a primeira cria a obra.
+        sincronizacoes = [linha[:3] for e, *linha in self.execucoes() if e == "centros_custo"]
+        self.assertEqual(sincronizacoes, [["ok", 1, 1], ["ok", 1, 0], ["ok", 1, 0]])
         unidades = self.conexao.execute(
             "select count(*) from staging.unidade where tenant_id = %s", (self.tenant,)).fetchone()[0]
         self.assertEqual(unidades, 1)

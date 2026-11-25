@@ -169,8 +169,12 @@ class RepositorioFalso:
         self.recargas += 1
 
     def sincronizar_centros_custo(self, tenant):
-        """Mesma regra de app.sincronizar_centros_custo: tipos 1 e 2 (ou sem type) viram obra; nada sai."""
-        vistas = {p["id"] for p in self.payloads("enterprises") if str(p.get("type", "1")) in ("1", "2")}
+        """Mesma regra de app.sincronizar_centros_custo: tipos 1 e 2 (ou sem type) viram obra, e os demais tipos
+        também quando têm unidade, contrato ou venda em raw; nada sai."""
+        com_venda = {p.get("enterpriseId") for e in ("units", "sales-contracts", "sales") for p in self.payloads(e)}
+        vistas = {p["id"] for p in self.payloads("enterprises")
+                  if str(p.get("type", "1")) in ("1", "2")
+                  or (str(p.get("type")) in ("3", "4") and p["id"] in com_venda)}
         novas = sorted(vistas - set(self.obras))
         self.obras = sorted(set(self.obras) | vistas)
         return ({"lidas": len(self.payloads("enterprises")), "criadas": len(novas), "atualizadas": 0,
@@ -249,12 +253,39 @@ class TesteCarga(unittest.TestCase):
         origem, repo = Origem(), RepositorioFalso(obras=())
         rest = origem.rest()
         rest["enterprises"] = [{"id": 101, "name": "Administrativo", "type": "3"}]
+        rest["units"] = []
+        rest["sales-contracts"] = lambda consulta: []
         with ApiFalsa(rest=rest, bulk=origem.bulk()) as api:
             relatorio = executar(cliente_para(api), repo, TENANT, HOJE, **OPCOES)
         self.assertEqual(relatorio.falhas, [("centros_custo", "sem obra")])
         self.assertEqual(repo.obras, [])
-        self.assertEqual({e for (_, e) in repo.marcas}, {"cost-centers", "enterprises"})
+        # Param no contrato: nenhuma tarefa por obra (mapa, medições, Bulk de vendas) avança a marca.
+        self.assertEqual({e for (_, e) in repo.marcas},
+                         {"cost-centers", "enterprises", "units", "indexers", "price-tables", "accounts-balances",
+                          "sales-contracts"})
         self.assertEqual(repo.recargas, 1)
+
+    def test_centro_custo_associado_so_com_contrato_vira_obra(self):
+        origem, repo = Origem(), RepositorioFalso(obras=())
+        rest = origem.rest()
+        rest["enterprises"] = [{"id": 101, "name": "Centro de Custo Associado", "type": "4"}]
+        rest["units"] = []
+        with ApiFalsa(rest=rest, bulk=origem.bulk()) as api:
+            relatorio = executar(cliente_para(api), repo, TENANT, HOJE, **OPCOES)
+        self.assertEqual(relatorio.falhas, [])
+        self.assertEqual(repo.obras, [101])
+        self.assertEqual(repo.contagem()["sales"], 2)
+
+    def test_centro_custo_com_unidade_vira_obra_na_primeira_carga(self):
+        origem, repo = Origem(), RepositorioFalso(obras=())
+        rest = origem.rest()
+        rest["enterprises"] = [{"id": 101, "name": "Centro Comercial", "type": "3"}]
+        with ApiFalsa(rest=rest, bulk=origem.bulk()) as api:
+            relatorio = executar(cliente_para(api), repo, TENANT, HOJE, **OPCOES)
+        self.assertEqual(relatorio.falhas, [])
+        self.assertEqual(repo.obras, [101])
+        self.assertEqual(relatorio.obras["criadas"], 1)
+        self.assertEqual(repo.contagem()["sales"], 2)
 
     def test_segunda_carga_igual_nao_duplica(self):
         origem, repo = Origem(), RepositorioFalso()

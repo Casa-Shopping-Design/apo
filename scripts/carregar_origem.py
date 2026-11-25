@@ -9,7 +9,7 @@ Antes do plano, os IDs avisados pelo webhook (app.evento_origem) são reconsulta
 eventos saem da fila na mesma transação que grava o que veio. Fila vazia não muda nada.
 
 A credencial e a URL do ERP vêm do ambiente; o resto da configuração vem de app.origem_configuracao
-do tenant (cadastrar_cliente.py). Depois do cadastro de empreendimentos, app.sincronizar_centros_custo
+do tenant (cadastrar_cliente.py). Depois de empreendimentos, unidades e contratos, app.sincronizar_centros_custo
 cria ou atualiza as obras em app.centro_custo, antes de qualquer tarefa que peça dado por obra.
 
 Com --pedido, a carga marca início, etapa, progresso e fim do pedido em app.carga_pedido, e cada chamada à
@@ -760,9 +760,13 @@ class RepositorioBanco:
 
 # marts.ultima_carga só considera a carga feita quando esta etapa termina com sucesso.
 ETAPA_STAGING = "staging"
-# Linha própria em carga_execucao para a sincronização das obras; a tarefa que a alimenta é enterprises.
+# Linha própria em carga_execucao para a sincronização das obras. Ela roda depois de cada tarefa que revela obra:
+# o empreendimento e, para centro de custo do tipo 3 ou 4, a unidade ou o contrato dele (migration 0057).
 ETAPA_CENTROS_CUSTO = "centros_custo"
-TAREFA_OBRAS = "enterprises"
+TAREFAS_QUE_REVELAM_OBRA = ("enterprises", "units", "sales-contracts")
+# Na primeira carga a unidade e o contrato só chegam ao raw depois do cadastro de empreendimentos; a falta de obra
+# se decide no contrato, a última tarefa do plano comum antes da primeira que pede dado por obra.
+TAREFA_OBRAS = "sales-contracts"
 
 
 class RepositorioComRegistro(RepositorioBanco):
@@ -1149,7 +1153,10 @@ def sincronizar_obras(ctx, repositorio, tenant, relatorio):
         log.error("sincronização das obras falhou: %s", type(erro).__name__)
         relatorio.falhas.append((ETAPA_CENTROS_CUSTO, type(erro).__name__))
         return
-    relatorio.obras = resultado
+    # As criadas e atualizadas somam as passagens da mesma carga; o resto vale o da última.
+    anteriores = relatorio.obras
+    relatorio.obras = {**resultado, **{chave: anteriores.get(chave, 0) + resultado.get(chave, 0)
+                                      for chave in ("criadas", "atualizadas")}}
     ausentes = resultado.get("ausentes_na_origem") or []
     if ausentes:
         log.warning("%d obra(s) de app.centro_custo não vieram mais do ERP e seguem no painel: %s",
@@ -1161,7 +1168,7 @@ def _sem_obras(tarefa, ctx, relatorio):
     seguinte pediria só o que mudou desde então."""
     if tarefa.endpoint != TAREFA_OBRAS or ctx.obras:
         return False
-    log.error("nenhuma obra em app.centro_custo depois do cadastro de empreendimentos; a carga para aqui")
+    log.error("nenhuma obra em app.centro_custo depois de empreendimentos, unidades e contratos; a carga para aqui")
     relatorio.falhas.append((ETAPA_CENTROS_CUSTO, "sem obra"))
     return True
 
@@ -1246,7 +1253,7 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
             gravar_requisicoes()
             acompanhamento.tarefa_concluida()
         ctx.concluidas.add(tarefa.endpoint)
-        if tarefa.endpoint == TAREFA_OBRAS:
+        if tarefa.endpoint in TAREFAS_QUE_REVELAM_OBRA:
             sincronizar_obras(ctx, repositorio, tenant, relatorio)
             if _sem_obras(tarefa, ctx, relatorio):
                 break
