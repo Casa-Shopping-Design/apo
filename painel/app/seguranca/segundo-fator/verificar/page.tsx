@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { VerificacaoSegundoFator } from "@/componentes/VerificacaoSegundoFator";
+import { cookieDefinirSenha, destinoDepoisDoSegundoFator } from "@/lib/senha";
 import { caminhosAcesso, decidirDestino } from "@/lib/supabase/nivel-acesso";
 import { criarClienteServidor } from "@/lib/supabase/servidor";
 import { lerNivelSessao } from "@/lib/supabase/sessao";
@@ -10,7 +12,7 @@ export const metadata: Metadata = { title: "Confirmar segundo fator" };
 export default async function PaginaVerificarSegundoFator() {
   const supabase = await criarClienteServidor();
   const nivel = await lerNivelSessao(supabase);
-  if (nivel.aal === "aal2") redirect("/");
+  if (nivel.aal === "aal2") redirect(destinoDepoisDoSegundoFator((await cookies()).get(cookieDefinirSenha)?.value));
   const destino = decidirDestino({ ...nivel, caminho: caminhosAcesso.verificar });
   if (destino !== "liberado") redirect(caminhosAcesso[destino]);
 

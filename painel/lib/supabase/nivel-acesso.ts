@@ -17,8 +17,16 @@ export const perfilOperador = "operador";
 // banco responderam, e repete o padrão que o gatilho da 0049 aplica a diretor e financeiro.
 const perfisComSegundoFator: ReadonlySet<string> = new Set(["diretor", "financeiro", perfilOperador]);
 
-// Rotas que nunca recebem redirecionamento: entrada, saída, manutenção, saúde e as próprias telas do segundo fator.
-const caminhosSemBarreira: ReadonlySet<string> = new Set(["/entrar", "/sair", "/manutencao", "/api/saude"]);
+// Rotas que nunca recebem redirecionamento: entrada, saída, manutenção, saúde, o pedido de link de senha e a
+// página do link do e-mail, que ainda não tem sessão. As telas do segundo fator passam pela regra de baixo.
+const caminhosSemBarreira: ReadonlySet<string> = new Set([
+  "/entrar",
+  "/sair",
+  "/manutencao",
+  "/api/saude",
+  "/esqueci-senha",
+  "/auth/confirmar",
+]);
 
 export function perfilExigeSegundoFator(perfil: string | null | undefined): boolean {
   return typeof perfil === "string" && perfisComSegundoFator.has(perfil);

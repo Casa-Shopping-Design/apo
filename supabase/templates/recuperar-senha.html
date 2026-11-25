@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="pt-BR">
+  <body style="margin:0;padding:24px;background:#f6f5f2;font-family:Georgia,serif;color:#1f1d1a">
+    <div style="max-width:480px;margin:0 auto;background:#ffffff;border:1px solid #dedad2;border-radius:8px;padding:28px">
+      <p style="font-size:20px;font-weight:600;margin:0 0 16px">Senha nova no APO</p>
+      <p style="font-size:15px;line-height:1.6;margin:0 0 20px">
+        Recebemos um pedido para criar uma senha nova para a sua conta. Clique no botão abaixo e, na página que abrir,
+        clique em Continuar. O link vale por uma hora e funciona uma vez só.
+      </p>
+      <p style="margin:0 0 24px">
+        <a href="{{ .SiteURL }}/auth/confirmar?token_hash={{ .TokenHash }}&amp;type=recovery"
+           style="display:inline-block;background:#1f1d1a;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:6px;font-size:15px">
+          Criar senha nova
+        </a>
+      </p>
+      <p style="font-size:13px;line-height:1.6;color:#6b665d;margin:0">
+        Se você não pediu, ignore este e-mail: a senha atual continua valendo.
+      </p>
+    </div>
+  </body>
+</html>

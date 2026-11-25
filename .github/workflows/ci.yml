@@ -69,8 +69,10 @@ jobs:
           echo "::add-mask::$SERVICE_ROLE_KEY"
           senha_diretor="$(openssl rand -hex 16)"
           senha_gerente="$(openssl rand -hex 16)"
+          senha_recuperacao="$(openssl rand -hex 16)"
           echo "::add-mask::$senha_diretor"
           echo "::add-mask::$senha_gerente"
+          echo "::add-mask::$senha_recuperacao"
 
           criar_usuario() {
             curl -sSf -X POST "$API_URL/auth/v1/admin/users" \
@@ -82,6 +84,8 @@ jobs:
           }
           id_diretor="$(criar_usuario diretor.e2e@teste.invalid "$senha_diretor")"
           id_gerente="$(criar_usuario gerente.e2e@teste.invalid "$senha_gerente")"
+          # Conta só do teste de recuperação de senha, que troca a senha dela; sem vínculo com cliente.
+          criar_usuario recuperacao.e2e@teste.invalid "$senha_recuperacao" > /dev/null
 
           export DATABASE_URL="$DB_URL"
           python scripts/vincular_usuarios_demo.py --diretor "$id_diretor" --gerente "$id_gerente"
@@ -96,6 +100,8 @@ jobs:
             echo "E2E_SENHA_DIRETOR=$senha_diretor"
             echo "E2E_EMAIL_GERENTE=gerente.e2e@teste.invalid"
             echo "E2E_SENHA_GERENTE=$senha_gerente"
+            echo "E2E_EMAIL_RECUPERACAO=recuperacao.e2e@teste.invalid"
+            echo "E2E_CAIXA_EMAIL_URL=$MAILPIT_URL"
           } >> "$GITHUB_ENV"
 
       - name: Carga da demo no banco local

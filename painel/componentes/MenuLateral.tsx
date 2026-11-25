@@ -86,6 +86,12 @@ export function MenuLateral({
             )}
           </p>
           {comSeletor && <SeletorCliente clientes={clientes} classeFoco={classeFoco} />}
+          <Link
+            href="/seguranca/senha"
+            className={`flex min-h-11 w-full items-center px-4 text-suave hover:text-texto hover:underline hover:underline-offset-4 md:px-5 ${classeFoco}`}
+          >
+            Trocar senha
+          </Link>
           <form action="/sair" method="post">
             <button
               type="submit"
