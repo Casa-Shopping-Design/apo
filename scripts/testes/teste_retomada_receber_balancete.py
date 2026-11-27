@@ -17,7 +17,7 @@ from api_falsa import ApiFalsa  # noqa: E402
 from carregar_origem import Contexto, RepositorioBanco, executar, titulos_receber_da_noite  # noqa: E402
 from cliente_origem import CotaEsgotada  # noqa: E402
 from retomada_carga import FIM_DE_FATIA, Retomada, em_fatias  # noqa: E402
-from teste_carga_contabil import conta_balancete, meses_pedidos  # noqa: E402
+from teste_carga_contabil import ACUMULADO, acumulados, conta_balancete, mensal, meses_pedidos  # noqa: E402
 from teste_carga_so_rest import PARCELAS_RECEBER, OrigemSoRest, repositorio_so_rest  # noqa: E402
 from teste_carregar_origem import HOJE, OPCOES, banco_local, cliente_para  # noqa: E402
 
@@ -80,9 +80,13 @@ def rodar(origem, repo, hoje=HOJE, cota=5000, tenant=TENANT, **opcoes):
 
 def cota_ate(origem, repo, hoje, rota, chamadas, **opcoes):
     """Teto que deixa passar tudo o que vem antes da primeira chamada da rota e mais tantas dela. O ensaio roda
-    numa cópia do repositório em memória."""
+    numa cópia do repositório em memória. Na rota do balancete conta só o histórico mensal: o acumulado usa a
+    mesma rota e vem antes, na frente fixa."""
     _, api = rodar(origem, copy.deepcopy(repo), hoje, **opcoes)
-    return next(i for i, r in enumerate(api.requisicoes) if r["caminho"].startswith(rota)) + chamadas
+
+    def da_rota(requisicao):
+        return requisicao["caminho"].startswith(rota) and (rota != BALANCETE or mensal(requisicao["consulta"]))
+    return next(i for i, r in enumerate(api.requisicoes) if da_rota(r)) + chamadas
 
 
 def titulos_pedidos(api):
@@ -221,6 +225,23 @@ class TesteBalanceteComCotaCurta(unittest.TestCase):
         self.assertEqual(meses_pedidos(api, 11), MESES_2026[-3:])
         self.assertEqual(self.repo.contagem()[BALANCETE], 2 * 9 * 2 * 2)
         self.assertEqual(self.repo.marcas[(TENANT, BALANCETE)], AMANHA)
+
+    def test_acumulado_entra_mesmo_com_a_cota_tomada_pelos_titulos(self):
+        relatorio, api = self.interromper_nos_titulos(HOJE)
+        self.assertTrue(relatorio.cota_esgotada)
+        self.assertIn(("bills", "cota diária"), relatorio.falhas)
+        self.assertEqual(sorted(c["companyId"] for c in acumulados(api)), ["11", "12"])
+        self.assertEqual({r["companyId"] for r in self.repo.payloads(ACUMULADO)}, {11, 12})
+        self.assertEqual(self.repo.marcas[(TENANT, ACUMULADO)], HOJE)
+        self.assertEqual(meses_pedidos(api, 11), [], "o histórico mensal fica para quando a cota sobrar")
+
+        relatorio, api = self.interromper_nos_titulos(AMANHA)
+        self.assertEqual(len(acumulados(api)), 2, "relido em toda execução")
+        self.assertEqual(self.repo.contagem()[ACUMULADO], 2 * 2, "mesma competência, sem linha nova")
+
+    def interromper_nos_titulos(self, hoje):
+        cota = cota_ate(self.origem, self.repo, hoje, "bills", 1, **self.opcoes)
+        return rodar(self.origem, self.repo, hoje=hoje, cota=cota, **self.opcoes)
 
     def test_pagina_repetida_para_no_mes_e_mantem_os_anteriores(self):
         self.origem.mes_com_pagina_repetida = "2026-03-01"

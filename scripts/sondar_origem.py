@@ -8,8 +8,9 @@ ja trazendo o subdominio. Grava as respostas brutas em dados/brutos/, que fica
 fora do git. So a primeira pagina de cada recurso.
 
 O balancete (trial-balance) e sondado num mes so, nas duas passagens (com e sem zeramento), mais
-uma chamada com offset 200 para ver se a API pagina. A empresa vem de --empresa, da primeira de
-ORIGEM_EMPRESAS_CONTABEIS ou da primeira devolvida por companies.
+uma chamada com offset 200 para ver se a API pagina e o acumulado como a carga pede: de
+ORIGEM_INICIO_CONTABIL (padrao 2020-01) ao fim do mes, sem zeramento. A empresa vem de --empresa, da
+primeira de ORIGEM_EMPRESAS_CONTABEIS ou da primeira devolvida por companies.
 
 Uso:
     python scripts/sondar_origem.py
@@ -33,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from cliente_origem import validar_caminho_bulk, validar_url_base  # noqa: E402
+from configuracao_origem import INICIO_CONTABIL_PADRAO, mes_de_texto  # noqa: E402
 
 RAIZ = Path(__file__).resolve().parent.parent
 PASTA_BRUTOS = RAIZ / "dados" / "brutos"
@@ -141,8 +143,9 @@ def mes_anterior(hoje):
     return (hoje.replace(day=1) - timedelta(days=1)).replace(day=1)
 
 
-def recursos_contabeis(mes, empresa):
-    """Balancete de um mes nas duas passagens, a segunda pagina e o plano de contas da empresa."""
+def recursos_contabeis(mes, empresa, inicio_contabil=INICIO_CONTABIL_PADRAO):
+    """Balancete de um mes nas duas passagens, a segunda pagina, o acumulado ate o fim do mes e o plano de
+    contas da empresa."""
     fim = (mes.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
     balancete = {"companyId": empresa, "initialPeriod": mes.isoformat(), "finalPeriod": fim.isoformat(),
                  "reportType": "CORPORATE", "onlyAccountsWithMovements": "false", "thirdParties": "false",
@@ -153,6 +156,9 @@ def recursos_contabeis(mes, empresa):
          {**balancete, "desconsiderClosingBalance": "true", "offset": 0}),
         ("trial-balance-offset-200", "trial-balance",
          {**balancete, "desconsiderClosingBalance": "false", "offset": 200}),
+        ("trial-balance-acumulado", "trial-balance",
+         {**balancete, "initialPeriod": inicio_contabil.isoformat(), "desconsiderClosingBalance": "true",
+          "offset": 0}),
         ("accountancy-accounts", "accountancy/accounts", {"companyId": empresa, "limit": 200, "offset": 0}),
     ]
 
@@ -350,7 +356,8 @@ def main():
             print("  balancete nao sondado: informe --empresa ou ORIGEM_EMPRESAS_CONTABEIS")
         else:
             mes = date.fromisoformat(f"{args.mes}-01") if args.mes else mes_anterior(hoje)
-            for nome, caminho, params in recursos_contabeis(mes, empresa):
+            inicio = mes_de_texto(os.environ.get("ORIGEM_INICIO_CONTABIL")) or INICIO_CONTABIL_PADRAO
+            for nome, caminho, params in recursos_contabeis(mes, empresa, inicio):
                 if not args.so or nome.startswith(args.so):
                     sondar(nome, caminho, params)
             if "trial-balance" in respostas:

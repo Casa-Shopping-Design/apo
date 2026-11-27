@@ -6,6 +6,9 @@ de nascimento. A troca e deterministica dentro de uma execucao: o mesmo CPF
 vira o mesmo CPF falso em todos os arquivos, entao os joins continuam
 funcionando. O sal e aleatorio a cada execucao, entao nao da para voltar.
 
+Nome de conta contabil com tres ou mais digitos seguidos sai com os digitos
+trocados por asterisco, pela mesma regra da carga (decisao 0026).
+
 Grava em dados/amostras/ e gera dados/amostras/_esquema.md com os campos
 de cada recurso comparados com os JSON sinteticos da demo.
 """
@@ -17,6 +20,10 @@ import re
 import secrets
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from mascara_nome_conta import mascarar_nome_conta  # noqa: E402
 
 RAIZ = Path(__file__).resolve().parent.parent
 PASTA_BRUTOS = RAIZ / "dados" / "brutos"
@@ -121,6 +128,11 @@ def limpar(no, caminho=()):
             anotar("endereco")
         elif k in CHAVES_BANCO or ("bank" in contexto and k in {"account", "accountnumber", "number"}):
             saida[chave] = trocar_digitos(valor); anotar("banco")
+        elif k == "accountname" and isinstance(valor, str):
+            mascarado = mascarar_nome_conta(valor)
+            if mascarado != valor:
+                anotar("nome de conta")
+            saida[chave] = limpar_texto(mascarado)
         elif k in CHAVES_NOME or (k == "name" and CONTEXTO_PESSOA.search(contexto)):
             saida[chave] = nome_falso(valor); anotar("nome de pessoa")
         elif isinstance(valor, str):
