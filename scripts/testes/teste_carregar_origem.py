@@ -124,6 +124,7 @@ class RepositorioFalso:
         self.modo = None
         self.obras = list(obras)
         self.recargas = 0
+        self.competencias_fechadas = {}
 
     def ler_estado(self, tenant):
         marcas = {e: d for (t, e), d in self.marcas.items() if t == tenant}
@@ -174,8 +175,15 @@ class RepositorioFalso:
         return {int(chave) for (t, e, _), (chave, _) in self.raw.items()
                 if t == tenant and e == endpoint and chave not in com_grupo}
 
-    def ler_empresas_contabeis(self, tenant):
-        return {p.get("companyId") for (t, e, _), (_, p) in self.raw.items() if t == tenant and e == "trial-balance"}
+    def ler_contas_contabeis(self, tenant):
+        contas = {}
+        for (t, e, _), (_, p) in self.raw.items():
+            if t == tenant and e == "trial-balance":
+                contas.setdefault(p.get("companyId"), set()).add(p.get("account"))
+        return contas
+
+    def ler_competencias_fechadas(self, tenant):
+        return dict(self.competencias_fechadas)
 
     def ler_titulos_receber(self, tenant):
         titulos = {p["receivableBillId"]: False for (t, e, _), (_, p) in self.raw.items()

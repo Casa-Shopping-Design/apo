@@ -11,7 +11,22 @@ necessário ela fica nula. O nome do credor segue a mesma regra porque credor po
 
 Caminho com ponto desce em objeto; "[]" marca lista e vale para cada elemento. Folha só aceita
 valor simples ou lista de valores simples: objeto que chegar numa folha é descartado inteiro.
+
+Nos dois endpoints do balancete o nome da conta sai daqui já mascarado (decisão 0026), então o hash e o
+payload gravados em raw nunca têm o número de banco, agência ou conta que vem no nome.
 """
+
+from mascara_nome_conta import ENDPOINTS_BALANCETE, mascarar_nome_conta
+
+# thirdParties fica de fora: traz nome e código de cliente e fornecedor. initialPeriod e
+# desconsiderClosingBalance dizem o mês e a passagem do balancete; o carregador acrescenta.
+CAMPOS_BALANCETE = [
+    "companyId", "reducedCode", "accountGroup", "account", "accountName", "accountType", "debit",
+    "credit", "operatingBalance.value", "operatingBalance.type",
+    "balances.previous.value", "balances.previous.type",
+    "balances.current.value", "balances.current.type",
+    "initialPeriod", "desconsiderClosingBalance",
+]
 
 CAMPOS_PERMITIDOS = {
     "cost-centers": ["id", "name", "idCompany"],
@@ -182,15 +197,10 @@ CAMPOS_PERMITIDOS = {
     ],
     # CNPJ aqui é da empresa do grupo (SPE ou holding), não de pessoa.
     "companies": ["id", "name", "tradeName", "cnpj"],
-    # thirdParties fica de fora: traz nome e código de cliente e fornecedor. initialPeriod e
-    # desconsiderClosingBalance dizem o mês e a passagem do balancete; o carregador acrescenta.
-    "trial-balance": [
-        "companyId", "reducedCode", "accountGroup", "account", "accountName", "accountType", "debit",
-        "credit", "operatingBalance.value", "operatingBalance.type",
-        "balances.previous.value", "balances.previous.type",
-        "balances.current.value", "balances.current.type",
-        "initialPeriod", "desconsiderClosingBalance",
-    ],
+    "trial-balance": CAMPOS_BALANCETE,
+    # Balancete do início contábil até o fim da competência, sem zeramento; finalPeriod é a competência e
+    # o carregador acrescenta, junto com initialPeriod.
+    "trial-balance-acumulado": [*CAMPOS_BALANCETE, "finalPeriod"],
     # Saldo da conta da construtora por centro de custo; id é o código reduzido da conta. Lançamento e lote
     # não entram, porque o staging lê só o saldo do mês.
     "accountancy/accountCostCenterBalance": [
@@ -244,4 +254,7 @@ def filtrar(endpoint, registro):
     arvore = ARVORES.get(endpoint)
     if arvore is None:
         raise EndpointSemLista(endpoint)
-    return _aplicar(registro, arvore) or {}
+    filtrado = _aplicar(registro, arvore) or {}
+    if endpoint in ENDPOINTS_BALANCETE and "accountName" in filtrado:
+        filtrado["accountName"] = mascarar_nome_conta(filtrado["accountName"])
+    return filtrado

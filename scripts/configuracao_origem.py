@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import date
 
 CHAVE_SOBRESCRITA = "ORIGEM_SOBRESCREVER_CONFIGURACAO"
+# Só o balancete acumulado usa este padrão; o histórico mensal sem ORIGEM_INICIO_CONTABIL segue pela janela inicial.
+INICIO_CONTABIL_PADRAO = date(2020, 1, 1)
 
 
 class SemConfiguracao(Exception):

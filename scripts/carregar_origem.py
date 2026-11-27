@@ -40,9 +40,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from campos_permitidos import EndpointSemLista, filtrar  # noqa: E402
-from cliente_origem import BulkIndisponivel, ClienteOrigem, ConfiguracaoOrigem, CotaEsgotada, ErroOrigem  # noqa: E402
+from cliente_origem import (  # noqa: E402
+    TAMANHO_PAGINA, BulkIndisponivel, ClienteOrigem, ConfiguracaoOrigem, CotaEsgotada, ErroOrigem,
+)
 from configuracao_origem import (  # noqa: E402
-    CHAVE_SOBRESCRITA, SemConfiguracao, ler_configuracao, sobrescrever_pelo_ambiente,
+    CHAVE_SOBRESCRITA, INICIO_CONTABIL_PADRAO, SemConfiguracao, ler_configuracao, sobrescrever_pelo_ambiente,
 )
 from configuracao_origem import opcoes_de_ambiente as opcoes_so_do_ambiente  # noqa: E402
 from pedido_carga import AcompanhamentoPedido, SemAcompanhamento  # noqa: E402
@@ -112,6 +114,7 @@ CHAVES = {
     "defaulters-receivable-bills/by-aging": Chave(("receivableBillId",)),
     "companies": Chave(("id",)),
     "trial-balance": Chave(("companyId", "account", "initialPeriod", "desconsiderClosingBalance")),
+    "trial-balance-acumulado": Chave(("companyId", "account", "finalPeriod")),
 }
 
 # Planos como dados: acrescentar endpoint é acrescentar uma Tarefa (e a estratégia, se for nova).
@@ -123,14 +126,17 @@ PLANO_COMUM = (
     Tarefa("price-tables", "cadastro", "price-tables", completa=True),
     Tarefa("accounts-balances", "saldos_do_dia", "accounts-balances"),
     Tarefa("sales-contracts", "contratos_alterados", "sales-contracts"),
+    # Logo depois das obras: o acumulado custa uma chamada por empresa e não pode esperar o histórico de
+    # títulos e parcelas, que com cota curta leva dias (decisão 0027). Sem companies a recarga descarta o balancete.
+    Tarefa("companies", "cadastro", "companies", completa=True),
+    Tarefa("trial-balance-acumulado", "balancete_acumulado", "trial-balance"),
     Tarefa("real-estate-map", "mapa_imobiliario", "real-estate-map"),
     Tarefa("building-projects/progress-logs/items", "medicoes_obra", "building-projects/progress-logs"),
 )
 
-# Os dois são REST e valem nos dois caminhos. Ficam fora do plano comum para entrar na ordem pela
-# marca: a primeira carga do balancete é longa e, na frente fixa, uma cota curta travaria o resto.
+# O histórico mensal fica fora do plano comum para entrar na ordem pela marca: a primeira carga dele é longa e,
+# na frente fixa, uma cota curta travaria o resto.
 PLANO_CONTABIL = (
-    Tarefa("companies", "cadastro", "companies", completa=True),
     Tarefa("trial-balance", "balancete_mensal", "trial-balance"),
 )
 
@@ -169,6 +175,8 @@ class Contexto:
     inicio_contabil: date | None = None
     empresas_contabeis: tuple = ()
     empresas_com_balancete: set = field(default_factory=set)
+    contas_com_balancete: dict = field(default_factory=dict)
+    competencias_fechadas: dict = field(default_factory=dict)
     titulos_receber: dict = field(default_factory=dict)
     concluidas: set = field(default_factory=set)
     compartilhado: dict = field(default_factory=dict)
@@ -176,6 +184,7 @@ class Contexto:
     sondagens: dict = field(default_factory=dict)
     titulos_sem_rateio: set = field(default_factory=set)
     andamento: dict = field(default_factory=dict)
+    avisos: list = field(default_factory=list)
 
     def inicio_janela(self):
         return (self.hoje - timedelta(days=self.janela_dias)).isoformat()
@@ -517,16 +526,27 @@ def _fim_mes(mes):
     return _somar_meses(mes, 1) - timedelta(days=1)
 
 
+def tem_conta_nova(ctx, empresa):
+    """Conta que o acumulado desta execução trouxe e o histórico mensal em raw ainda não tem. O ERP cadastra a
+    conta com 01/01 do ano, então lançamento retroativo nela pode cair em qualquer mês desde janeiro."""
+    vistas = ctx.compartilhado.get("contas_do_acumulado", {}).get(empresa, set())
+    return bool(vistas - ctx.contas_com_balancete.get(empresa, set()))
+
+
 def meses_contabeis(ctx, marca, empresa, historico_inteiro=False):
     """Empresa que já tem balancete em raw revê os últimos meses a partir da marca (lançamento
     retroativo em mês aberto); empresa nova, ou primeira carga, vem desde o início contábil.
+    Com conta nova a revisão volta a janeiro do ano corrente, uma vez: depois dela a conta está em raw.
 
     A empresa em que um ciclo interrompido parou pede o histórico inteiro: as fatias já gravadas a puseram em
     raw, e pela regra de cima os meses antigos que faltam ficariam de fora."""
     atual = _inicio_mes(ctx.hoje)
     inicio = ctx.inicio_contabil or _inicio_mes(ctx.hoje - timedelta(days=ctx.janela_dias))
     if marca and empresa in ctx.empresas_com_balancete and not historico_inteiro:
-        inicio = max(inicio, _somar_meses(_inicio_mes(marca), -(MESES_REVISAO_CONTABIL - 1)))
+        revisao = _somar_meses(_inicio_mes(marca), -(MESES_REVISAO_CONTABIL - 1))
+        if tem_conta_nova(ctx, empresa):
+            revisao = min(revisao, date(ctx.hoje.year, 1, 1))
+        inicio = max(inicio, revisao)
     meses = []
     while inicio <= atual:
         meses.append(inicio)
@@ -538,7 +558,7 @@ def _rotulo_passagem(sem_zeramento):
     return "sem zeramento" if sem_zeramento else "com zeramento"
 
 
-# Uma transação a cada tantos meses de empresa: cerca de 180 chamadas, com duas passagens de três páginas.
+# Uma transação a cada tantos meses de empresa: 60 chamadas, duas passagens de uma página.
 BALANCETES_POR_FATIA = 30
 FATOR_EMPRESA = 1_000_000
 
@@ -548,44 +568,120 @@ def _codigo_balancete(empresa, mes):
     return empresa * FATOR_EMPRESA + mes.year * 100 + mes.month
 
 
-def _balancete_do_mes(ctx, tarefa, empresa, mes):
-    registros = []
-    for sem_zeramento in PASSAGENS_BALANCETE:
-        parametros = {"companyId": empresa, "initialPeriod": mes.isoformat(),
-                      "finalPeriod": _fim_mes(mes).isoformat(),
-                      "desconsiderClosingBalance": "true" if sem_zeramento else "false",
-                      "reportType": "CORPORATE", "onlyAccountsWithMovements": "false",
-                      "thirdParties": "false"}
-        vistas = set()
-        for pagina in ctx.cliente.listar(tarefa.recurso, parametros):
-            contas = {r.get("account") for r in pagina if r.get("account") is not None}
-            if contas & vistas:
-                raise ErroOrigem(0, tarefa.recurso,
-                                 f"página repetida na empresa {empresa}, mês {mes:%Y-%m}, "
-                                 f"{_rotulo_passagem(sem_zeramento)}: a API não pagina pelo "
-                                 f"offset; o mês não foi gravado, confira com a sondagem")
-            vistas |= contas
-            registros += [(tarefa.endpoint, {"companyId": empresa, **registro, "initialPeriod": mes.isoformat(),
-                                             "desconsiderClosingBalance": sem_zeramento}) for registro in pagina]
+def _parametros_balancete(empresa, inicio, fim, sem_zeramento):
+    return {"companyId": empresa, "initialPeriod": inicio.isoformat(), "finalPeriod": fim.isoformat(),
+            "desconsiderClosingBalance": "true" if sem_zeramento else "false",
+            "reportType": "CORPORATE", "onlyAccountsWithMovements": "false", "thirdParties": "false"}
+
+
+def _ler_balancete(ctx, recurso, parametros, rotulo):
+    """Todas as contas de uma consulta ao balancete.
+
+    A API ignora o limit e devolve o plano inteiro numa página (sondagem de 26/11). Página maior que o limite
+    pedido encerra a leitura, com ou sem count na resposta. Página seguinte que repete conta da anterior quer
+    dizer que a API ignora também o offset: a consulta falha sem gravar, em vez de duplicar ou perder contas."""
+    registros, vistas = [], set()
+    for pagina in ctx.cliente.listar(recurso, parametros):
+        contas = {r.get("account") for r in pagina if r.get("account") is not None}
+        if contas & vistas:
+            raise ErroOrigem(0, recurso, f"página repetida na {rotulo}: a API não pagina pelo offset e a "
+                                         f"consulta não foi gravada, confira com a sondagem")
+        vistas |= contas
+        registros += pagina
+        if len(pagina) > TAMANHO_PAGINA:
+            break
     return registros
 
 
-# O(e x m x 2 x p) chamadas REST: e empresas, m meses que faltam no ciclo, duas passagens e p páginas de 200
-# contas (p perto de 3). Primeira carga de uma SPE com 42 meses: cerca de 250 chamadas; noite comum, com
-# 3 meses de revisão: cerca de 18 por empresa. Memória O(contas de um mês, nas duas passagens).
+def _balancete_do_mes(ctx, tarefa, empresa, mes):
+    registros = []
+    for sem_zeramento in PASSAGENS_BALANCETE:
+        parametros = _parametros_balancete(empresa, mes, _fim_mes(mes), sem_zeramento)
+        rotulo = f"empresa {empresa}, mês {mes:%Y-%m}, {_rotulo_passagem(sem_zeramento)}"
+        registros += [(tarefa.endpoint, {"companyId": empresa, **registro, "initialPeriod": mes.isoformat(),
+                                         "desconsiderClosingBalance": sem_zeramento})
+                      for registro in _ler_balancete(ctx, tarefa.recurso, parametros, rotulo)]
+    return registros
+
+
+def _empresas_do_balancete(ctx):
+    return sorted(set(empresas_das_obras(ctx)) | set(ctx.empresas_contabeis))
+
+
+def competencia_contabil(ctx, empresa):
+    """Último dia do mês pedido no acumulado: app.empresa.competencia_fechada quando preenchida, senão o fim do
+    mês anterior ao da execução. Nunca passa desse fim de mês, porque o mês corrente ainda recebe lançamento."""
+    limite = _inicio_mes(ctx.hoje) - timedelta(days=1)
+    fechada = ctx.competencias_fechadas.get(empresa)
+    return min(fechada, limite) if fechada else limite
+
+
+def _saldo_atual(registro):
+    saldo = (registro.get("balances") or {}).get("current") or {}
+    valor = saldo.get("value")
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        return None
+    return -valor if saldo.get("type") == "C" else valor
+
+
+# O(c) nas contas da resposta.
+def grupos_que_nao_fecham(registros):
+    """Grupos do plano (primeiro dígito do código) em que a soma das analíticas difere da sintética de nível 1."""
+    sinteticas, somas = {}, {}
+    for registro in registros:
+        conta = str(registro.get("account") or "")
+        saldo = _saldo_atual(registro)
+        if not conta or saldo is None:
+            continue
+        grupo = conta.split(".")[0]
+        if conta == grupo:
+            sinteticas[grupo] = saldo
+        elif registro.get("accountType") == "ANALYTICAL":
+            somas[grupo] = somas.get(grupo, 0.0) + saldo
+    return sorted(g for g, saldo in sinteticas.items() if abs(somas.get(g, 0.0) - saldo) >= 0.01)
+
+
+# O(e) chamadas REST, uma por empresa, e O(c) por empresa na conferência. Memória O(contas de uma empresa).
+def balancete_acumulado(ctx, tarefa, marca):
+    """Saldo de cada empresa do início contábil ao fim da competência, sem zeramento do resultado: as contas de
+    resultado zeram todo mês e o mês isolado não dá o acumulado da DRE (decisão 0027). Relido em toda execução.
+
+    Uma fatia por empresa: falha numa empresa não desfaz a gravada antes. O aviso de grupo que não fecha leva
+    só a empresa e o grupo, porque o relatório vai para o log público do Actions."""
+    inicio = ctx.inicio_contabil or INICIO_CONTABIL_PADRAO
+    vistas = ctx.compartilhado.setdefault("contas_do_acumulado", {})
+    pedidas = [(empresa, competencia_contabil(ctx, empresa)) for empresa in _empresas_do_balancete(ctx)]
+
+    def ler(unidade):
+        empresa, fim = unidade
+        rotulo = f"empresa {empresa}, acumulado até {fim:%Y-%m}"
+        contas = _ler_balancete(ctx, tarefa.recurso, _parametros_balancete(empresa, inicio, fim, True), rotulo)
+        vistas[empresa] = {r.get("account") for r in contas if r.get("account") is not None}
+        grupos = grupos_que_nao_fecham(contas)
+        if grupos:
+            ctx.avisos.append(f"{tarefa.endpoint}: empresa {empresa}, grupo {', '.join(grupos)} com soma das "
+                              "analíticas diferente da sintética; confira o balancete no ERP")
+        return [(tarefa.endpoint, {"companyId": empresa, **registro, "initialPeriod": inicio.isoformat(),
+                                   "finalPeriod": fim.isoformat(), "desconsiderClosingBalance": True})
+                for registro in contas]
+
+    yield from em_fatias([(e, fim) for e, fim in pedidas if fim >= inicio], ler, lambda: None, 1)
+
+
+# O(e x m x 2) chamadas REST: e empresas, m meses que faltam no ciclo e duas passagens, uma página cada.
+# Histórico de 01/2020 a 11/2026: 166 chamadas por empresa; noite comum, com 3 meses de revisão: 6 por empresa.
+# Memória O(contas de um mês, nas duas passagens).
 def balancete_mensal(ctx, tarefa, marca):
     """Balancete por empresa e mês, nas duas passagens (com e sem zeramento do resultado).
 
     O mês de uma empresa só entra no fluxo com as duas passagens lidas, e o ponto de retomada guarda o último
-    que entrou (em_fatias). A execução seguinte pula o que vem antes dele na ordem de empresa e mês.
-
-    A paginação do balancete não está documentada. Se a página seguinte repetir conta da anterior,
-    a API ignora o offset: a tarefa para nesse mês, sem gravá-lo, em vez de duplicar ou perder contas.
+    que entrou (em_fatias). A execução seguinte pula o que vem antes dele na ordem de empresa e mês. A página
+    repetida para a tarefa nesse mês, sem gravá-lo (_ler_balancete).
     """
     retomada = ctx.retomadas.get(tarefa.endpoint)
     inicio_ciclo = retomada.iniciada_em if retomada else ctx.hoje
     cursor = retomada.ultimo_id if retomada else 0
-    empresas = sorted(set(empresas_das_obras(ctx)) | set(ctx.empresas_contabeis))
+    empresas = _empresas_do_balancete(ctx)
     unidades = [(empresa, mes) for empresa in empresas
                 for mes in meses_contabeis(ctx, marca, empresa, historico_inteiro=empresa == cursor // FATOR_EMPRESA)]
     pendentes = [unidade for unidade in unidades if _codigo_balancete(*unidade) > cursor]
@@ -618,8 +714,8 @@ ESTRATEGIAS = {
     "medicoes_obra": medicoes_obra,
     "inadimplencia_por_faixa": inadimplencia_por_faixa,
     "balancete_mensal": balancete_mensal,
+    "balancete_acumulado": balancete_acumulado,
 }
-
 
 def hash_registro(payload):
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -713,13 +809,30 @@ class RepositorioBanco:
             obras = [linha[0] for linha in cur.fetchall()]
         return marcas, modo, obras
 
-    def ler_empresas_contabeis(self, tenant):
-        """Empresas que já têm balancete em raw. A chave começa pelo companyId e o índice
-        (tenant_id, endpoint, chave_origem) cobre a leitura."""
+    def ler_contas_contabeis(self, tenant):
+        """Contas de cada empresa que já tem balancete mensal em raw. A chave começa por companyId e account, e o
+        índice (tenant_id, endpoint, chave_origem) cobre a leitura; O(n) nos registros do balancete."""
+        contas = {}
         with self.conexao.cursor() as cur:
-            cur.execute("select distinct split_part(chave_origem, '|', 1) from raw.registro "
-                        "where tenant_id = %s and endpoint = 'trial-balance'", (tenant,))
-            return {int(valor) for (valor,) in cur.fetchall() if valor and valor.isdigit()}
+            cur.execute("select split_part(chave_origem, '|', 1), split_part(chave_origem, '|', 2) "
+                        "from raw.registro where tenant_id = %s and endpoint = 'trial-balance' group by 1, 2",
+                        (tenant,))
+            for empresa, conta in cur.fetchall():
+                if empresa and empresa.isdigit() and conta:
+                    contas.setdefault(int(empresa), set()).add(conta)
+        return contas
+
+    def ler_competencias_fechadas(self, tenant):
+        """Competência fechada de cada empresa. A coluna nasce na 0062; banco sem ela devolve vazio e o acumulado
+        pede o mês anterior ao da execução."""
+        with self.conexao.cursor() as cur:
+            cur.execute("select 1 from information_schema.columns where table_schema = 'app' "
+                        "and table_name = 'empresa' and column_name = 'competencia_fechada'")
+            if cur.fetchone() is None:
+                return {}
+            cur.execute("select id_origem, competencia_fechada from app.empresa "
+                        "where tenant_id = %s and competencia_fechada is not null", (tenant,))
+            return dict(cur.fetchall())
 
     def ler_titulos_receber(self, tenant):
         """Título a receber de cada contrato em raw e se ele já foi lido alguma vez (com parcela ou só o marcador
@@ -1397,7 +1510,9 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
 
     marcas, modo, obras = repositorio.ler_estado(tenant)
     ctx = Contexto(cliente=cliente, hoje=hoje, obras=obras, **opcoes)
-    ctx.empresas_com_balancete = repositorio.ler_empresas_contabeis(tenant)
+    ctx.contas_com_balancete = repositorio.ler_contas_contabeis(tenant)
+    ctx.empresas_com_balancete = set(ctx.contas_com_balancete)
+    ctx.competencias_fechadas = repositorio.ler_competencias_fechadas(tenant)
     ctx.titulos_receber = repositorio.ler_titulos_receber(tenant)
     ctx.retomadas = repositorio.ler_retomadas(tenant)
     ctx.sondagens = {nome: SondagemSubRecurso(estado, hoje)
@@ -1482,6 +1597,7 @@ def executar(cliente, repositorio, tenant, hoje, **opcoes):
             bulk_respondeu = True
     gravar_sondagens(ctx, repositorio, tenant, relatorio)
     anotar_andamento(ctx, relatorio)
+    relatorio.avisos += ctx.avisos
     if usar_bulk and bulk_respondeu and modo and modo[0]:
         repositorio.gravar_modo(tenant, False)
     if fila_eventos is not None:

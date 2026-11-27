@@ -1,0 +1,39 @@
+# 0028 Plano de contas com nível, conta nova, competência contábil e balancete por nível
+
+**Contexto.** Na reunião de 25/11 o Braga pediu que todo o realizado da DRE venha da contabilidade, acumulado do início até o último mês fechado, e que o painel avise antes de cada carga as contas sem classificação. O plano de contas é hierárquico: os níveis que ele usa (1, 3, 5 e 8) são o tamanho do código contábil, a analítica tem 13 caracteres e o grupo é o primeiro dígito. Os grupos 4 (custos e despesas) e 5 (custo do empreendimento) chegam os dois como `EXPENSES` no balancete. A data de cadastro da conta no ERP não serve para achar conta nova, porque a equipe dele preenche 01/01 do ano em todo cadastro. Uma conta criada em novembro fica com 01/01, e a data só diz o ano.
+
+A leitura da API em 26/11 mostrou que o mês isolado não dá o acumulado do resultado: a empresa apura todo mês e a conta de receita volta a zero. O balancete do início contábil até o fim da competência, sem o zeramento, dá as duas coisas numa chamada: o resultado acumulado e o balanço.
+
+**Decisão.** A migration 0062 faz o seguinte.
+
+Balancete acumulado. `staging.saldo_contabil_empresa_acumulado` guarda, por empresa, conta analítica e competência, o débito, o crédito e os saldos anterior e final, com devedor positivo e credor negativo. Sai do endpoint `trial-balance-acumulado` em raw, que o carregador grava pelo contrato da onda 1: uma chamada por empresa e execução, de `ORIGEM_INICIO_CONTABIL` até o último dia da competência, chave (`companyId`, `account`, `finalPeriod`). A competência é o `finalPeriod` (último dia do mês) e `inicio` é o `initialPeriod`. Registro com `finalPeriod` fora do último dia do mês fica em raw e não entra. `lido_em` é a data em que a versão vigente do registro entrou em raw. Reler os mesmos números não a move, porque o hash não muda; ela diz desde quando aquele número está no painel. O RLS é o do balancete mensal: empresas permitidas, restritiva do segundo fator e nenhuma escrita pela API.
+
+Competência contábil. `app.empresa.competencia_fechada` guarda o último dia do mês que o cliente já fechou. `marts.competencia_contabil` dá, por empresa, a maior competência do acumulado lida depois do fim do mês, sem passar de `competencia_fechada`, com a data da leitura. Sem leitura que sirva, a linha traz a competência esperada (`competencia_fechada` ou o último dia do mês anterior ao corrente) com `lida` falso. É a única definição de competência: DRE, caixa da empresa e telas leem dela e não recalculam. A leitura feita antes do fim do mês fica de fora, para a tela não chamar de fechado um mês lido pela metade. Nesta rodada só o dono do banco preenche a coluna:
+
+```sql
+update app.empresa set competencia_fechada = '2026-09-30'
+where tenant_id = '<tenant>' and id_origem = <empresa>;
+```
+
+Plano de contas. `staging.plano_conta` ganha `tamanho_codigo` e `grupo_plano`, gerados do código. O nome `nivel` ficou de fora porque `marts.linha_relatorio` já tem uma coluna `nivel` com outro sentido. O plano sai do registro mais recente de cada conta entre o balancete mensal e o acumulado. Como o acumulado é lido em toda execução, o plano fica em dia mesmo quando o histórico mensal ainda não terminou.
+
+Conta nova. `vista_em` é a primeira vez que a carga viu a conta, pelo relógio do painel. As linhas que já existiam receberam `'-infinity'`: foram vistas antes deste controle e não são novas. O upsert da recarga não mexe na coluna. A novidade é do tenant, pelo código reduzido (sem reduzido, pelo código contábil): vale o menor `vista_em` entre as empresas, porque o plano é um só no grupo e a segunda empresa carregada não pode reacender o plano inteiro. O maior código reduzido não serve como marca, porque a numeração tem buracos. Nenhum código lê a data de cadastro do ERP; se `accountancy/accounts` for liberado, esse campo fica fora de `scripts/campos_permitidos.py`.
+
+Contas a classificar. `marts.contas_a_classificar` lista, por empresa, a analítica com saldo ou movimento em alguma passagem do mensal ou no acumulado (o critério de `marts.conta_sem_mapa`) em uma de duas situações. Em `sem_linha` ela não tem linha própria nem herdada. Em `herdou_confira` ela nunca teve mapa próprio e herda de um prefixo mapeado antes de o tenant vê-la pela primeira vez. A conta sai da lista quando ganha mapa próprio, mesmo que seja a linha que já herdava, porque `app.gravar_mapa_conta_linha` compara com a vigente da própria conta e grava a versão. Regravar a sintética com a mesma linha não dá baixa, porque não cria versão. Conta que teve mapa próprio e o perdeu volta a herdar sem reacender o aviso. O aviso é informativo e a carga não espera a classificação. O código contábil continua sendo a chave do mapa, com herança pelo prefixo. `marts.conta_sem_mapa` fica como está para o controle do F&U; a tela de contas a classificar lê a view nova.
+
+Balancete por nível. `marts.balancete_por_nivel` (mensal, nas duas passagens) e `marts.balancete_acumulado_por_nivel` (acumulado) dão, para cada prefixo do código nas fronteiras de ponto, a soma das analíticas abaixo dele. A junção é por igualdade com os até cinco prefixos de cada analítica, sem `like`. As duas ficam com diretor e financeiro, como o plano. `marts.cobertura_balancete` dá os meses do mensal que faltam entre o primeiro e o último carregado de cada empresa; mês com uma passagem só aparece como faltando.
+
+Catálogo. O catálogo de linhas continua fixo nesta rodada e o balancete por nível é tela, sem classificação. `grupos_aceitos` não entrou: a conferência do encaixe das sintéticas de nível 5 e 8 no catálogo ainda não foi feita.
+
+**Consequências.**
+- `staging.recarregar_contabil` foi recriada com o mesmo corpo da 0036 nos trechos de empresa, obra e balancete mensal. Mudaram só o trecho do plano e o do acumulado.
+- O carregador precisa gravar `trial-balance-acumulado` com `finalPeriod` e `initialPeriod` no payload e o `accountName` já mascarado. Até isso chegar, `marts.competencia_contabil` mostra a competência esperada com `lida` falso e as telas devem dizer que falta o balancete, em vez de mostrar zero.
+- A releitura da empresa desde janeiro quando aparece código novo fica na carga (decisão 0027). Esta migration só marca a conta.
+- Custo: o acumulado são as analíticas de uma empresa por competência lida, cerca de 500 linhas na Verg. Contas a classificar é O(a x n) nas analíticas do tenant com até cinco níveis; o balancete por nível filtrado por empresa e competência também. Num banco descartável com duas empresas, 509 analíticas, 83 meses de mensal e seis competências de acumulado, as cinco views responderam em menos de 30 ms como dono do banco.
+- O teste `supabase/tests/plano_conta_conta_nova.sql` usa a estrutura do plano da Verg com valores inventados. Ele cobre: contagem por nível, grupo 4 separado do 5, conta com 01/01 no ERP vista agora como nova, buraco no reduzido, conta herdada antes do controle fora da lista, segunda empresa sem reacender, conta sem saldo fora, recarga repetida preservando `vista_em`, baixa pelo mapa próprio, competência com leitura antes do fim do mês e com `competencia_fechada`, 1.1.1 como soma de três analíticas com uma credora, 5.1 mais 5.9 em zero, mês faltando na cobertura e o acesso por perfil e tenant.
+
+**Pendente.**
+- `accounts-balances` (item 25 do plano): a decisão de tirar a tarefa e apagar os registros, se o `accountNumber` for conta bancária, está com o João. Esta migration não mexe nesse endpoint.
+- O atraso normal do fechamento da Verg, para saber se `competencia_fechada` vai ser a regra ou a exceção. Em 25/11 o mês fechado era setembro.
+- O encaixe das sintéticas de nível 5 e 8 no catálogo. Se aparecer conta que não cabe no grupo da linha, `grupos_aceitos` entra numa migration nova, como coluna no fim de `marts.linha_relatorio`.
+- A tela para preencher `competencia_fechada`.
